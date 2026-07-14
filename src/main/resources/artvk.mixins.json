@@ -1,0 +1,14 @@
+{
+	"required": true,
+	"package": "git.artdeell.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"mixins": [
+		"Vk11BackendMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}

@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "artvk",
+	"version": "${version}",
+	"name": "ArtVK",
+	"description": "ArtVK is a Blaze3D backend implementation that runs on (almost) unextended Vulkan 1.1",
+	"authors": [
+		"Maksim Belov (artDev)"
+	],
+	"contact": {
+		"sources": "https://github.com/artdeell/ArtVK"
+	},
+	"license": "Polyform-Shield-1.0.0",
+	"icon": "assets/dogshitvk/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+          "git.artdeell.ArtVK"
+		]
+	},
+	"mixins": [
+      "artvk.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25"
+	}
+}
