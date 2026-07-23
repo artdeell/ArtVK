@@ -133,15 +133,17 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 		int vendorId = this.vkPhysicalDeviceProperties.properties().vendorID();
 
 		return switch (vendorId) {
-			case 4098, 4130 -> "AMD";
-			case 4112 -> "IMGTEC";
-			case 4203 -> "APPLE";
-			case 4318, 4818 -> "NVIDIA";
-			case 5045 -> "ARM";
-			case 5140 -> "MICROSOFT";
-			case 5348 -> "BROADCOM";
-			case 5772, 6091, 6505, 20803 -> "QUALCOMM";
-			case 32902 -> "INTEL";
+			case 0x1002, 0x1022 -> "AMD";
+			case 0x1010 -> "Imagination Technologies";
+			case 0x106B -> "Apple";
+			case 0x10DE, 0x12D2 -> "NVIDIA";
+			case 0x13B5 -> "ARM";
+			case 0x1414 -> "Microsoft Corporation";
+			case 0x14E4 -> "Broadcom";
+			case 0x168C, 0x17CB, 0x1969, 0x5143 -> "Qualcomm";
+			case 0x8086 -> "Intel";
+			case 0x10005 -> "Mesa";
+			case 0x1AE0 -> "Google";
 			default -> String.format(Locale.ROOT, "0x%x", vendorId);
 		};
 	}
