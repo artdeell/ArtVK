@@ -335,9 +335,12 @@ public class Vk11RenderPass implements RenderPassBackend {
         Vk11BindGroupLayout layout = pipeline.layout();
         Vk11DescriptorPool pool = pipeline.descriptorPool();
 
-        pool.allocateSet(frameIndex);
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            for (int i = 0; i < layout.entries().size(); i++) {
+        int numEntries = layout.entries().size();
+        try (
+                MemoryStack stack = MemoryStack.stackPush();
+                Vk11DescriptorPool.DescriptorSetAlloc update = pool.allocateSet(stack, numEntries, frameIndex)
+        ) {
+            for (int i = 0; i < numEntries; i++) {
                 Vk11BindGroupLayout.Entry entry = layout.entries().get(i);
                 switch (entry.type()) {
                     case UNIFORM_BUFFER -> {
@@ -345,14 +348,14 @@ public class Vk11RenderPass implements RenderPassBackend {
                         if (buffer == null) {
                             throw new IllegalStateException("Missing uniform " + entry.name() + " (should be " + entry.type() + ")");
                         }
-                        pool.updateUniformBuffer(device, i, ((Vk11GpuBuffer)buffer.buffer()).vkBuffer(), buffer.offset(), buffer.length());
+                        update.addUniformBuffer(i, ((Vk11GpuBuffer)buffer.buffer()).vkBuffer(), buffer.offset(), buffer.length());
                     }
                     case SAMPLED_IMAGE -> {
                         Vk11RenderPass.TextureViewAndSampler value = textures.get(entry.name());
                         if (value == null) {
                             throw new IllegalStateException("Missing sampler " + entry.name());
                         }
-                        pool.updateSampledImage(device, i, value.view.vkImageView(), value.sampler.vkSampler());
+                        update.addSampledImage(i, value.view.vkImageView(), value.sampler.vkSampler());
                     }
                     case TEXEL_BUFFER -> {
                         GpuBufferSlice value = uniforms.get(entry.name());
@@ -374,19 +377,18 @@ public class Vk11RenderPass implements RenderPassBackend {
                             long bufferViewHandle = bufferViewPtr.get(0);
                             encoder.queueForDestroy(() -> VK10.vkDestroyBufferView(device.vkDevice(), bufferViewHandle, null));
                         }
-                        pool.updateTexelBuffer(device, i, bufferViewPtr.get(0));
+                        update.addTexelBuffer(i, bufferViewPtr.get(0));
                     }
                 }
             }
-
-            pool.bind(commandBuffer(), pipeline.pipelineLayout());
+            update.updateAndBind(commandBuffer(), pipeline.pipelineLayout());
         }
 
         anyDescriptorDirty = false;
 	}
 
 	@Override
-	public void writeTimestamp(final GpuQueryPool pool, final int index) {
+	public void writeTimestamp(final @NotNull GpuQueryPool pool, final int index) {
 		long queryPool = ((Vk11QueryPool)pool).vkQueryPool();
 		VK10.vkCmdResetQueryPool(commandBuffer(), queryPool, index, 1);
 		VK10.vkCmdWriteTimestamp(commandBuffer(), VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, index);

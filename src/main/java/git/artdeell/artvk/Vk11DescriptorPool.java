@@ -5,10 +5,7 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
-import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
-import org.lwjgl.vulkan.VkDescriptorPoolSize;
-import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo;
+import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer;
 
 @Environment(EnvType.CLIENT)
@@ -20,7 +17,6 @@ public class Vk11DescriptorPool implements Destroyable {
 	private final Vk11Device device;
     private final PoolObject[] pools = new PoolObject[Vk11CommandEncoder.MAX_SUBMITS_IN_FLIGHT];
     private final LongBuffer bindGroupLayouts;
-    private long currentSet;
 
 	public Vk11DescriptorPool(final Vk11Device device, final Vk11CommandEncoder encoder, final Vk11BindGroupLayout layout) {
 		this.device = device;
@@ -70,83 +66,87 @@ public class Vk11DescriptorPool implements Destroyable {
         return pools[frameIndex].isOverCapacityThreshold();
     }
 
-	public void allocateSet(final int frameIndex) {
-        currentSet = pools[frameIndex].takeSet();
+	public DescriptorSetAlloc allocateSet(final MemoryStack memoryStack, final int numWrites, final int frameIndex) {
+        long currentSet = pools[frameIndex].takeSet();
+        return new DescriptorSetAlloc(memoryStack, numWrites, currentSet);
 	}
 
 	public void resetFrame(final int frameIndex) {
 		pools[frameIndex].reset();
 	}
 
-	public void updateUniformBuffer(final Vk11Device device, final int binding, final long buffer, final long offset, final long range) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			org.lwjgl.vulkan.VkDescriptorBufferInfo.Buffer bufferInfo = org.lwjgl.vulkan.VkDescriptorBufferInfo.calloc(1, stack);
-			bufferInfo.buffer(buffer);
-			bufferInfo.offset(offset);
-			bufferInfo.range(range);
-
-			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
-			write.get(0)
-				.sType$Default()
-				.dstSet(currentSet)
-				.dstBinding(binding)
-				.dstArrayElement(0)
-				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-				.descriptorCount(1)
-				.pBufferInfo(bufferInfo);
-
-			VK10.vkUpdateDescriptorSets(device.vkDevice(), write, null);
-		}
-	}
-
-	public void updateSampledImage(final Vk11Device device, final int binding, final long imageView, final long sampler) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			org.lwjgl.vulkan.VkDescriptorImageInfo.Buffer imageInfo = org.lwjgl.vulkan.VkDescriptorImageInfo.calloc(1, stack);
-			imageInfo.sampler(sampler);
-			imageInfo.imageView(imageView);
-			imageInfo.imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
-
-			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
-			write.get(0)
-				.sType$Default()
-				.dstSet(currentSet)
-				.dstBinding(binding)
-				.dstArrayElement(0)
-				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-				.descriptorCount(1)
-				.pImageInfo(imageInfo);
-
-			VK10.vkUpdateDescriptorSets(device.vkDevice(), write, null);
-		}
-	}
-
-	public void updateTexelBuffer(final Vk11Device device, final int binding, final long bufferView) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			LongBuffer bvPtr = stack.longs(bufferView);
-
-			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
-			write.get(0)
-				.sType$Default()
-				.dstSet(currentSet)
-				.dstBinding(binding)
-				.dstArrayElement(0)
-				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
-				.descriptorCount(1)
-				.pTexelBufferView(bvPtr);
-
-			VK10.vkUpdateDescriptorSets(device.vkDevice(), write, null);
-		}
-	}
-
-	public void bind(final org.lwjgl.vulkan.VkCommandBuffer commandBuffer, final long pipelineLayout) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, stack.longs(currentSet), null);
-		}
-	}
 	@Override
 	public void destroy() {
 		for(PoolObject pool : pools) pool.destroy();
 	}
+
+    public class DescriptorSetAlloc implements AutoCloseable {
+        private final MemoryStack memoryStack;
+        private final VkWriteDescriptorSet.Buffer writes;
+        private final long descriptorSet;
+        private int index = 0;
+        public DescriptorSetAlloc(MemoryStack memoryStack, int nWrites, long descriptorSet) {
+            this.memoryStack = memoryStack.push();
+            writes = VkWriteDescriptorSet.calloc(nWrites, memoryStack);
+            this.descriptorSet = descriptorSet;
+        }
+
+        public void addUniformBuffer(final int binding, final long buffer, final long offset, final long range) {
+            VkDescriptorBufferInfo.Buffer bufferInfo = VkDescriptorBufferInfo.calloc(1, memoryStack);
+            bufferInfo.buffer(buffer);
+            bufferInfo.offset(offset);
+            bufferInfo.range(range);
+
+            writes.get(index++)
+                    .sType$Default()
+                    .dstSet(descriptorSet)
+                    .dstBinding(binding)
+                    .dstArrayElement(0)
+                    .descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
+                    .descriptorCount(1)
+                    .pBufferInfo(bufferInfo);
+        }
+
+        public void addTexelBuffer(final int binding, final long bufferView) {
+            LongBuffer bvPtr = memoryStack.longs(bufferView);
+
+            writes.get(index++)
+                    .sType$Default()
+                    .dstSet(descriptorSet)
+                    .dstBinding(binding)
+                    .dstArrayElement(0)
+                    .descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
+                    .descriptorCount(1)
+                    .pTexelBufferView(bvPtr);
+
+        }
+
+        public void addSampledImage(final int binding, final long imageView, final long sampler) {
+            VkDescriptorImageInfo.Buffer imageInfo = VkDescriptorImageInfo.calloc(1, memoryStack);
+            imageInfo.sampler(sampler);
+            imageInfo.imageView(imageView);
+            imageInfo.imageLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
+
+            writes.get(index++)
+                    .sType$Default()
+                    .dstSet(descriptorSet)
+                    .dstBinding(binding)
+                    .dstArrayElement(0)
+                    .descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .pImageInfo(imageInfo);
+        }
+
+        public void updateAndBind(VkCommandBuffer commandBuffer, long pipelineLayout) {
+            VK10.vkUpdateDescriptorSets(device.vkDevice(), writes, null);
+            VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, memoryStack.longs(descriptorSet), null);
+        }
+
+        @Override
+        public void close() {
+            memoryStack.pop();
+        }
+    }
 
     private class PoolObject {
         protected final long pool;
@@ -189,7 +189,6 @@ public class Vk11DescriptorPool implements Destroyable {
 
         public void reset() {
             if(numUsed > RECLAIM_THRESHOLD) {
-
                 Vk11Utils.crashIfFailure(VK10.vkResetDescriptorPool(device.vkDevice(), pool, 0), "Failed to reclaim descriptor pool");
                 numAllocated = 0;
                 preallocateMore(SET_PREALLOCATE_COUNT);
