@@ -144,6 +144,7 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 			case 0x8086 -> "Intel";
 			case 0x10005 -> "Mesa";
 			case 0x1AE0 -> "Google";
+			case 0x144D -> "Samsung";
 			default -> String.format(Locale.ROOT, "0x%x", vendorId);
 		};
 	}
