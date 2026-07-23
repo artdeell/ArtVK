@@ -4,7 +4,8 @@
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
 		"Vk11BackendMixin",
-        "RenderDistanceMixin"
+        "RenderDistanceMixin",
+		"SystemSpecsMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
