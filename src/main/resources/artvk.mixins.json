@@ -3,7 +3,8 @@
 	"package": "git.artdeell.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"mixins": [
-		"Vk11BackendMixin"
+		"Vk11BackendMixin",
+        "RenderDistanceMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
