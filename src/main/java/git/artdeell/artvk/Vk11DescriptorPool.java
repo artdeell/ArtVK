@@ -4,6 +4,7 @@ import java.nio.LongBuffer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorPoolSize;
@@ -13,15 +14,19 @@ import org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer;
 @Environment(EnvType.CLIENT)
 public class Vk11DescriptorPool implements Destroyable {
 	public static final int SETS_PER_FRAME = 1512;
-	private static final int TOTAL_SETS = Vk11CommandEncoder.MAX_SUBMITS_IN_FLIGHT * SETS_PER_FRAME;
+    public static final int SET_PREALLOCATE_COUNT = 504;
+    public static final int RECLAIM_THRESHOLD = 504;
 
 	private final Vk11Device device;
-	private final long pool;
-	private final long[] sets = new long[TOTAL_SETS];
-	private final int[] frameSetIndex = new int[Vk11CommandEncoder.MAX_SUBMITS_IN_FLIGHT];
+    private final PoolObject[] pools = new PoolObject[Vk11CommandEncoder.MAX_SUBMITS_IN_FLIGHT];
+    private final LongBuffer bindGroupLayouts;
+    private long currentSet;
 
 	public Vk11DescriptorPool(final Vk11Device device, final Vk11CommandEncoder encoder, final Vk11BindGroupLayout layout) {
 		this.device = device;
+        long bindGroupLayout = layout.handle();
+        bindGroupLayouts = MemoryUtil.memAllocLong(SET_PREALLOCATE_COUNT);
+        for(int i = 0; i < SET_PREALLOCATE_COUNT; i++) bindGroupLayouts.put(i, bindGroupLayout);
 
 		int uniformBufferCount = 0;
 		int sampledImageCount = 0;
@@ -44,62 +49,36 @@ public class Vk11DescriptorPool implements Destroyable {
 			Buffer poolSizes = VkDescriptorPoolSize.calloc(poolSizeCount, stack);
 			int idx = 0;
 			if (uniformBufferCount > 0) {
-				poolSizes.get(idx).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(uniformBufferCount * TOTAL_SETS);
-				idx++;
+				poolSizes.get(idx++).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER).descriptorCount(uniformBufferCount * SETS_PER_FRAME);
 			}
 			if (sampledImageCount > 0) {
-				poolSizes.get(idx).type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(sampledImageCount * TOTAL_SETS);
-				idx++;
+				poolSizes.get(idx++).type(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(sampledImageCount * SETS_PER_FRAME);
 			}
 			if (texelBufferCount > 0) {
-				poolSizes.get(idx).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER).descriptorCount(texelBufferCount * TOTAL_SETS);
+				poolSizes.get(idx++).type(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER).descriptorCount(texelBufferCount * SETS_PER_FRAME);
 			}
 
-			VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-				.sType$Default()
-				.maxSets(TOTAL_SETS)
-				.pPoolSizes(poolSizes);
-			LongBuffer poolPtr = stack.callocLong(1);
-			Vk11Utils.crashIfFailure(VK10.vkCreateDescriptorPool(device.vkDevice(), poolInfo, null, poolPtr), "Failed to create descriptor pool");
-			this.pool = poolPtr.get(0);
+            for(int i = 0; i < pools.length; i++) {
+                pools[i] = new PoolObject(stack, poolSizes);
+            }
 
-			LongBuffer setLayouts = stack.longs(layout.handle());
-			LongBuffer setPtr = stack.callocLong(1);
-			VkDescriptorSetAllocateInfo allocInfo = VkDescriptorSetAllocateInfo.calloc(stack)
-				.sType$Default()
-				.descriptorPool(this.pool)
-				.pSetLayouts(setLayouts);
-			for (int i = 0; i < TOTAL_SETS; i++) {
-				Vk11Utils.crashIfFailure(VK10.vkAllocateDescriptorSets(device.vkDevice(), allocInfo, setPtr), "Failed to allocate descriptor set");
-				this.sets[i] = setPtr.get(0);
-			}
 		}
 		encoder.registerDescriptorPool(this);
 	}
 
     public boolean isCapacityLow(int frameIndex) {
-        int offset = this.frameSetIndex[frameIndex];
-        if(offset >= SETS_PER_FRAME / 2) {
-            System.out.println(toString()+" over capacity threshold: "+SETS_PER_FRAME +" used: "+offset);
-            return true;
-        }
-        return false;
+        return pools[frameIndex].isOverCapacityThreshold();
     }
 
-	public int allocateSet(final int frameIndex) {
-		int base = frameIndex * SETS_PER_FRAME;
-		int offset = this.frameSetIndex[frameIndex]++;
-		if (offset >= SETS_PER_FRAME) {
-			throw new IllegalStateException("Descriptor set limit exceeded for frame " + frameIndex + " (max " + SETS_PER_FRAME + " per frame)");
-		}
-		return base + offset;
+	public void allocateSet(final int frameIndex) {
+        currentSet = pools[frameIndex].takeSet();
 	}
 
 	public void resetFrame(final int frameIndex) {
-		this.frameSetIndex[frameIndex] = 0;
+		pools[frameIndex].reset();
 	}
 
-	public void updateUniformBuffer(final Vk11Device device, final int setIndex, final int binding, final long buffer, final long offset, final long range) {
+	public void updateUniformBuffer(final Vk11Device device, final int binding, final long buffer, final long offset, final long range) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			org.lwjgl.vulkan.VkDescriptorBufferInfo.Buffer bufferInfo = org.lwjgl.vulkan.VkDescriptorBufferInfo.calloc(1, stack);
 			bufferInfo.buffer(buffer);
@@ -109,7 +88,7 @@ public class Vk11DescriptorPool implements Destroyable {
 			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
 			write.get(0)
 				.sType$Default()
-				.dstSet(this.sets[setIndex])
+				.dstSet(currentSet)
 				.dstBinding(binding)
 				.dstArrayElement(0)
 				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
@@ -120,7 +99,7 @@ public class Vk11DescriptorPool implements Destroyable {
 		}
 	}
 
-	public void updateSampledImage(final Vk11Device device, final int setIndex, final int binding, final long imageView, final long sampler) {
+	public void updateSampledImage(final Vk11Device device, final int binding, final long imageView, final long sampler) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			org.lwjgl.vulkan.VkDescriptorImageInfo.Buffer imageInfo = org.lwjgl.vulkan.VkDescriptorImageInfo.calloc(1, stack);
 			imageInfo.sampler(sampler);
@@ -130,7 +109,7 @@ public class Vk11DescriptorPool implements Destroyable {
 			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
 			write.get(0)
 				.sType$Default()
-				.dstSet(this.sets[setIndex])
+				.dstSet(currentSet)
 				.dstBinding(binding)
 				.dstArrayElement(0)
 				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
@@ -141,14 +120,14 @@ public class Vk11DescriptorPool implements Destroyable {
 		}
 	}
 
-	public void updateTexelBuffer(final Vk11Device device, final int setIndex, final int binding, final long bufferView) {
+	public void updateTexelBuffer(final Vk11Device device, final int binding, final long bufferView) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			LongBuffer bvPtr = stack.longs(bufferView);
 
 			org.lwjgl.vulkan.VkWriteDescriptorSet.Buffer write = org.lwjgl.vulkan.VkWriteDescriptorSet.calloc(1, stack);
 			write.get(0)
 				.sType$Default()
-				.dstSet(this.sets[setIndex])
+				.dstSet(currentSet)
 				.dstBinding(binding)
 				.dstArrayElement(0)
 				.descriptorType(VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
@@ -159,18 +138,75 @@ public class Vk11DescriptorPool implements Destroyable {
 		}
 	}
 
-	public void bind(final org.lwjgl.vulkan.VkCommandBuffer commandBuffer, final long pipelineLayout, final int setIndex) {
+	public void bind(final org.lwjgl.vulkan.VkCommandBuffer commandBuffer, final long pipelineLayout) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, stack.longs(this.sets[setIndex]), null);
+			VK10.vkCmdBindDescriptorSets(commandBuffer, VK10.VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, stack.longs(currentSet), null);
 		}
 	}
-
-	public long descriptorSet(final int setIndex) {
-		return this.sets[setIndex];
-	}
-
 	@Override
 	public void destroy() {
-		VK10.vkDestroyDescriptorPool(device.vkDevice(), pool, null);
+		for(PoolObject pool : pools) pool.destroy();
 	}
+
+    private class PoolObject {
+        protected final long pool;
+        protected final LongBuffer sets;
+        private int numAllocated;
+        private int numUsed;
+
+        public PoolObject(MemoryStack stack, Buffer poolSizes) {
+            VkDescriptorPoolCreateInfo poolInfo = VkDescriptorPoolCreateInfo.calloc(stack)
+                    .sType$Default()
+                    .maxSets(SETS_PER_FRAME)
+                    .pPoolSizes(poolSizes);
+            LongBuffer poolPtr = stack.callocLong(1);
+            Vk11Utils.crashIfFailure(VK10.vkCreateDescriptorPool(device.vkDevice(), poolInfo, null, poolPtr), "Failed to create descriptor pool");
+            pool = poolPtr.get(0);
+            sets = MemoryUtil.memCallocLong(SETS_PER_FRAME);
+            numAllocated = 0;
+            numUsed = 0;
+            preallocateMore(SET_PREALLOCATE_COUNT);
+        }
+
+        public void preallocateMore(int count) {
+            assert count <= SET_PREALLOCATE_COUNT;
+            LongBuffer layoutsSlice = MemoryUtil.memSlice(bindGroupLayouts, 0, count);
+            LongBuffer outSetsSlice = MemoryUtil.memSlice(sets, numAllocated, count);
+            try(MemoryStack stack = MemoryStack.stackPush()) {
+                VkDescriptorSetAllocateInfo allocInfo = VkDescriptorSetAllocateInfo.calloc(stack)
+                        .sType$Default()
+                        .descriptorPool(pool)
+                        .pSetLayouts(layoutsSlice);
+                assert allocInfo.descriptorSetCount() == count;
+                Vk11Utils.crashIfFailure(VK10.vkAllocateDescriptorSets(device.vkDevice(), allocInfo, outSetsSlice), "Failed to allocate descriptor set");
+            }
+            numAllocated += count;
+        }
+
+        public boolean isOverCapacityThreshold() {
+            return numUsed >= RECLAIM_THRESHOLD;
+        }
+
+        public void reset() {
+            if(numUsed > RECLAIM_THRESHOLD) {
+
+                Vk11Utils.crashIfFailure(VK10.vkResetDescriptorPool(device.vkDevice(), pool, 0), "Failed to reclaim descriptor pool");
+                numAllocated = 0;
+                preallocateMore(SET_PREALLOCATE_COUNT);
+            }
+            numUsed = 0;
+        }
+
+        public long takeSet() {
+            int nextIdx = numUsed++;
+            if(nextIdx >= numAllocated) {
+                preallocateMore(SET_PREALLOCATE_COUNT);
+            }
+            return sets.get(nextIdx);
+        }
+
+        public void destroy() {
+            VK10.vkDestroyDescriptorPool(device.vkDevice(), pool, null);
+        }
+    }
 }

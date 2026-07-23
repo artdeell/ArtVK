@@ -334,8 +334,8 @@ public class Vk11RenderPass implements RenderPassBackend {
         assert pipeline != null;
         Vk11BindGroupLayout layout = pipeline.layout();
         Vk11DescriptorPool pool = pipeline.descriptorPool();
-        int setIndex = pool.allocateSet(frameIndex);
 
+        pool.allocateSet(frameIndex);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (int i = 0; i < layout.entries().size(); i++) {
                 Vk11BindGroupLayout.Entry entry = layout.entries().get(i);
@@ -345,14 +345,14 @@ public class Vk11RenderPass implements RenderPassBackend {
                         if (buffer == null) {
                             throw new IllegalStateException("Missing uniform " + entry.name() + " (should be " + entry.type() + ")");
                         }
-                        pool.updateUniformBuffer(device, setIndex, i, ((Vk11GpuBuffer)buffer.buffer()).vkBuffer(), buffer.offset(), buffer.length());
+                        pool.updateUniformBuffer(device, i, ((Vk11GpuBuffer)buffer.buffer()).vkBuffer(), buffer.offset(), buffer.length());
                     }
                     case SAMPLED_IMAGE -> {
                         Vk11RenderPass.TextureViewAndSampler value = textures.get(entry.name());
                         if (value == null) {
                             throw new IllegalStateException("Missing sampler " + entry.name());
                         }
-                        pool.updateSampledImage(device, setIndex, i, value.view.vkImageView(), value.sampler.vkSampler());
+                        pool.updateSampledImage(device, i, value.view.vkImageView(), value.sampler.vkSampler());
                     }
                     case TEXEL_BUFFER -> {
                         GpuBufferSlice value = uniforms.get(entry.name());
@@ -374,12 +374,12 @@ public class Vk11RenderPass implements RenderPassBackend {
                             long bufferViewHandle = bufferViewPtr.get(0);
                             encoder.queueForDestroy(() -> VK10.vkDestroyBufferView(device.vkDevice(), bufferViewHandle, null));
                         }
-                        pool.updateTexelBuffer(device, setIndex, i, bufferViewPtr.get(0));
+                        pool.updateTexelBuffer(device, i, bufferViewPtr.get(0));
                     }
                 }
             }
 
-            pool.bind(commandBuffer(), pipeline.pipelineLayout(), setIndex);
+            pool.bind(commandBuffer(), pipeline.pipelineLayout());
         }
 
         anyDescriptorDirty = false;
