@@ -401,4 +401,11 @@ public class Vk11RenderPass implements RenderPassBackend {
 	@Environment(EnvType.CLIENT)
 	protected record TextureViewAndSampler(Vk11GpuTextureView view, Vk11GpuSampler sampler) {
 	}
+
+	public VkCommandBuffer getCommandBuffer(){
+		return commandBuffer;
+	}
+	public Vk11RenderPipeline getPipeline(){
+		return pipeline;
+	}
 }

@@ -20,7 +20,7 @@
 		]
 	},
 	"mixins": [
-      "artvk.mixins.json"
+      "artvk.mixins.json", "artvk.sodium.mixins.json"
 	],
 	"depends": {
 		"fabricloader": ">=0.19.3",
