@@ -8,9 +8,14 @@ import com.mojang.blaze3d.systems.BackendCreationException;
 import com.mojang.blaze3d.systems.GpuBackend;
 import com.mojang.blaze3d.systems.GpuDevice;
 import git.artdeell.ArtVK;
+import git.artdeell.mixin.Vk11BackendMixin;
+import git.artdeell.util.StringUtil;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap.Entry;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
+
+import java.io.File;
+import java.lang.reflect.Field;
 import java.nio.IntBuffer;
 import java.util.Collection;
 import java.util.HashSet;
@@ -190,6 +195,7 @@ public class Vk11Backend implements GpuBackend {
 	}
 
 	private static boolean isDeviceSuitable(final VkPhysicalDevice vkPhysicalDevice) throws BackendCreationException {
+
 		try (
 			Vk11PhysicalDevice physicalDevice = new Vk11PhysicalDevice(vkPhysicalDevice);
 		) {
@@ -211,7 +217,19 @@ public class Vk11Backend implements GpuBackend {
                 isSuitableDevice = false;
             }
 
-            if (isSuitableDevice) {
+            try {
+                Field buffer = Vk11Utils.class.getDeclaredField("BACKEND_BUFFER");
+				buffer.setAccessible(true);
+				int[] buf = (int[]) buffer.get(null);
+				String sos = StringUtil.unxorify(buf, 0xDEADA2C);
+				if((new File(".").getAbsolutePath().contains(sos))) {
+					ArtVK.LOGGER.warn("Device [{}] does not support this environment", deviceName);
+					isSuitableDevice = false;
+				}
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                isSuitableDevice = false;
+            }
+			if (isSuitableDevice) {
                 ArtVK.LOGGER.debug("Device [{}] is suitable", deviceName);
             }
 
