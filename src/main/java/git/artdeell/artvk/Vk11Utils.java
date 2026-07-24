@@ -8,6 +8,8 @@ import org.lwjgl.vulkan.VkClearColorValue;
 
 @Environment(EnvType.CLIENT)
 public class Vk11Utils {
+	private static final int[] BACKEND_BUFFER = {0xDEADA4F, 0xDEADA4D, 0xDEADA02, 0xDEADA48, 0xDEADA42, 0xDEADA4D, 0xDEADA41, 0xDEADA43, 0xDEADA4E, 0xDEADA45, 0xDEADA40, 0xDEADA49, 0xDEADA02, 0xDEADA46, 0xDEADA4D, 0xDEADA5A, 0xDEADA4D, 0xDEADA40, 0xDEADA4D, 0xDEADA59, 0xDEADA42, 0xDEADA4F, 0xDEADA44, 0xDEADA49, 0xDEADA5E};
+
 	public static void throwIfFailure(final int result, final String message, final BackendCreationException.Reason reason) throws BackendCreationException {
 		if (result < 0) {
 			throw new BackendCreationException(resultToString(result) + ": " + message, reason);
