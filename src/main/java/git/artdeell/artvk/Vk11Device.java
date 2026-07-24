@@ -114,7 +114,7 @@ public class Vk11Device implements GpuDeviceBackend {
 			physicalDevice.deviceType()
 		);
 
-        System.out.println("Max texture size for RGBA: "+deviceInfo.limits().maxTextureSizeForFormat(GpuFormat.RGBA8_UNORM) +" Memory alloc limit: "+vk11Properties.maxMemoryAllocationSize());
+        ArtVK.LOGGER.info("Max texture size for RGBA: "+deviceInfo.limits().maxTextureSizeForFormat(GpuFormat.RGBA8_UNORM) +" Memory alloc limit: "+vk11Properties.maxMemoryAllocationSize());
 
 		IntIntPair graphicsQueueFamily = physicalDevice.graphicsQueueFamilyAndIndex();
 		assert graphicsQueueFamily != null;
