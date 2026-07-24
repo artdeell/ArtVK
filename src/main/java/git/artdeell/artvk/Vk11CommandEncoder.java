@@ -16,6 +16,8 @@ import java.nio.LongBuffer;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+
+import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jetbrains.annotations.NotNull;
@@ -299,7 +301,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 					RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> attachment = colorAttachments.get(i);
 					if (attachment.clearValue().isPresent()) {
 						Vector4fc color = attachment.clearValue().get();
-                        System.out.println("Clear value: "+color);
+                        ArtVK.LOGGER.info("Clear value: "+color);
 						Vk11Utils.putArgb(clearValues.get(i).color(), color);
 					}
 				}
@@ -353,7 +355,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		}
 
         if(poolCapacityLow) {
-            System.out.println("Descriptor pool capacity is low, submitting out of order");
+            ArtVK.LOGGER.info("Descriptor pool capacity is low, submitting out of order");
             submit();
         }
 	}

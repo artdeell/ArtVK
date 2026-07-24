@@ -90,7 +90,7 @@ public class Vk11Instance implements AutoCloseable {
                         .pEnabledValidationFeatures(stack.ints(
                                 EXTValidationFeatures.VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
                         ));
-                System.out.println("validation features: "+features.enabledValidationFeatureCount());
+                ArtVK.LOGGER.info("validation features: "+features.enabledValidationFeatureCount());
                 instanceInfo.pNext(features);
             }
 
