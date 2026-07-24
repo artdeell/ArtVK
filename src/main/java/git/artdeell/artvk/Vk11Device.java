@@ -310,6 +310,8 @@ public class Vk11Device implements GpuDeviceBackend {
 			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);
 		}
 
+		long pushConstantRange = Math.max(vertexShader.pushConstantRange(), fragmentShader.pushConstantRange());
+
 		try {
 			Vk11GlslCompiler.CompiledModules modules = this.glslCompiler.compile(this, pipeline, vertexShader, fragmentShader);
 			List<Integer> colorFormats = new java.util.ArrayList<>();
@@ -323,7 +325,7 @@ public class Vk11Device implements GpuDeviceBackend {
 			int depthFormat = VK10.VK_FORMAT_D32_SFLOAT;
 			long renderPassWithDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, true, depthFormat);
 			long renderPassWithoutDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
-			return Vk11RenderPipeline.compile(this, modules.layout(), pipeline, modules.vertex(), modules.fragment(), renderPassWithDepth, renderPassWithoutDepth);
+			return Vk11RenderPipeline.compile(this, modules.layout(), pipeline, modules.vertex(), modules.fragment(), renderPassWithDepth, renderPassWithoutDepth, pushConstantRange);
 		} catch (ShaderCompileException e) {
 			ArtVK.LOGGER.error("Couldn't compile pipeline {}: {}", pipeline.getLocation(), e.getMessage());
 			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);

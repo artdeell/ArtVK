@@ -22,10 +22,10 @@ import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 
 @Environment(EnvType.CLIENT)
 public record Vk11IntermediaryShaderModule(
-	String name, @Nullable ByteBuffer spirv, List<SpvUniformBuffer> uniformBuffers, List<SpvSampler> samplers, List<SpvVariable> outputs, List<SpvVariable> inputs
+	String name, @Nullable ByteBuffer spirv, List<SpvUniformBuffer> uniformBuffers, List<SpvSampler> samplers, List<SpvVariable> outputs, List<SpvVariable> inputs,  long pushConstantRange
 ) implements AutoCloseable {
 	public static final Vk11IntermediaryShaderModule INVALID = new Vk11IntermediaryShaderModule(
-		"invalid", null, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()
+		"invalid", null, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 0
 	);
 
 	public static Vk11IntermediaryShaderModule createFromSpirv(final String filename, final ByteBuffer spirv) throws ShaderCompileException {
@@ -33,6 +33,7 @@ public record Vk11IntermediaryShaderModule(
 		List<SpvSampler> samplers = new ArrayList<>();
 		List<SpvVariable> outputs = new ArrayList<>();
 		List<SpvVariable> inputs = new ArrayList<>();
+		long pushConstantRange = 0;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			PointerBuffer pointer = stack.callocPointer(1);
@@ -97,6 +98,28 @@ public record Vk11IntermediaryShaderModule(
 				int bindingOffset = getDecorationOffset(compiler, resource, Spv.SpvDecorationLocation, intReturnBuffer);
 				inputs.add(new SpvVariable(name, bindingOffset));
 				}
+
+				throwIfError(Spvc.spvc_resources_get_resource_list_for_type(spvcResources, Spvc.SPVC_RESOURCE_TYPE_PUSH_CONSTANT, pointer, countPointer), "Couldn't list push constant ranges");
+				spvcList = pointer.get(0);
+				spvcCount = countPointer.get(0);
+				Buffer pc = SpvcReflectedResource.create(spvcList, (int) spvcCount);
+				for(int i = 0; i < spvcCount; i++){
+					SpvcReflectedResource resource = pc.get(i);
+					long typeHandle = Spvc.spvc_compiler_get_type_handle(compiler, resource.base_type_id());
+					if (typeHandle == 0) continue;
+					int memberCount = Spvc.spvc_type_get_num_member_types(typeHandle);
+					int size = 0;
+					for (int m = 0; m < memberCount; m++) {
+						int memberTypeId = Spvc.spvc_type_get_member_type(typeHandle, m);
+						long memberHandle = Spvc.spvc_compiler_get_type_handle(compiler, memberTypeId);
+						int vecSize = Spvc.spvc_type_get_vector_size(memberHandle);
+						int columns = Spvc.spvc_type_get_columns(memberHandle);
+						int bitWidth = Spvc.spvc_type_get_bit_width(memberHandle);
+						int memberSize = (bitWidth / 8) * vecSize * columns;
+						size += memberSize;
+					}
+					if(size > pushConstantRange) pushConstantRange = size;
+				}
 			} finally {
 				Spvc.spvc_context_destroy(context);
 			}
@@ -108,7 +131,7 @@ public record Vk11IntermediaryShaderModule(
 			spvAsIntBuffer.put(outputs.get(i).locationOffset(), i);
 		}
 
-		return new Vk11IntermediaryShaderModule(filename, spirv, uniformBuffers, samplers, outputs, inputs);
+		return new Vk11IntermediaryShaderModule(filename, spirv, uniformBuffers, samplers, outputs, inputs, pushConstantRange);
 	}
 
 	@Override
