@@ -39,7 +39,14 @@ public record Vk11RenderPipeline(
 	) {
 		long pipelineLayout;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack).sType$Default().pSetLayouts(stack.longs(layout.handle()));
+			VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack)
+					.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
+					.offset(0)
+					.size(20);
+			VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+					.sType$Default()
+					.pPushConstantRanges(range)
+					.pSetLayouts(stack.longs(layout.handle()));
 			LongBuffer pointer = stack.callocLong(1);
 			Vk11Utils.crashIfFailure(
                     VK10.vkCreatePipelineLayout(device.vkDevice(), createInfo, null, pointer), "Can't create pipeline for " + pipeline.getLocation()
