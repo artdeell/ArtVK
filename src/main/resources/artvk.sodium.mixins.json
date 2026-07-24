@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "package": "git.artdeell.compat.sodium",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "DrawBackendMixin",
+    "VKDrawContextMixin",
+    "DrawBackendMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

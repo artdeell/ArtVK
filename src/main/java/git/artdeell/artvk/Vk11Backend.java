@@ -291,6 +291,11 @@ public class Vk11Backend implements GpuBackend {
 			vertexDivisorFeatures.vertexAttributeInstanceRateDivisor(true);
 			vk11Features.pNext(vertexDivisorFeatures.address());
 
+			// Enable MultiDrawEXT if present
+			VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeatures = VkPhysicalDeviceMultiDrawFeaturesEXT.calloc(stack).sType$Default();
+			multiDrawFeatures.multiDraw(true);
+			vk11Features.pNext(multiDrawFeatures.address());
+
 			Int2IntMap queuesToCreate = physicalDevice.queueFamilyCreateInfoMap();
 			Buffer queueCreationInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
 
