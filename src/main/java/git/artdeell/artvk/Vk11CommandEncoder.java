@@ -594,16 +594,25 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		}
 	}
 
+    public int getPreviousFrameIndex(int past) {
+        return Math.floorMod(currentSubmitIndex - past, MAX_SUBMITS_IN_FLIGHT);
+    }
+
 	@Override
 	public @NotNull GpuFence createFence() {
         return new GpuFence() {
-            // Don't gaf
-            // Maybe TODO: implement fence for previous frame's submit
+            private boolean completed = false;
+            private final long lastFence = frameFences[getPreviousFrameIndex(1)].vkFence();
             @Override
-            public void close() {}
+            public void close() {
+                completed = true;
+            }
 
             @Override
             public boolean awaitCompletion(long timeoutNS) {
+                if(completed) return true;
+                waitForFences(lastFence);
+                completed = true;
                 return true;
             }
         };
