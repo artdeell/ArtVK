@@ -21,6 +21,8 @@ public class DrawBackendMixin {
         if(((GpuDeviceAccessor) device).sodium$getBackend() instanceof Vk11Device){
             if(device.getDeviceInfo().features().multiDrawDirectInterleaved())
                 cir.setReturnValue(DrawBackend.VK_MULTIDRAW);
+            // Upstream Sodium uses MDI here, but we will check for generic indirect draw
+            // MDI is emulated on the backend side
             else if(device.getDeviceInfo().features().drawIndirect())
                 cir.setReturnValue(DrawBackend.VK_INDIRECT);
             else throw new IllegalStateException("Selected Vulkan device does not support neither multidraw nor indirect draw backends. Sodium might be unsupported on this device");

@@ -9,6 +9,7 @@ import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.GpuQueryPool;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderPassBackend;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import java.nio.IntBuffer;
@@ -229,9 +230,19 @@ public class Vk11RenderPass implements RenderPassBackend {
 	public void drawIndexedIndirect(final @NotNull GpuBufferSlice commands, final int drawCount) {
 		if (pipeline != null && pipeline.isValid()) {
             pushDescriptors();
-			VK10.vkCmdDrawIndexedIndirect(
-				commandBuffer(), ((Vk11GpuBuffer)commands.buffer()).vkBuffer(), commands.offset(), drawCount, VkDrawIndexedIndirectCommand.SIZEOF
-			);
+			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
+			if(device.realFeatures().multiDrawIndirect())
+				VK10.vkCmdDrawIndexedIndirect(
+					commandBuffer(), buf, commands.offset(), drawCount, VkDrawIndexedIndirectCommand.SIZEOF
+				);
+			else {
+				// Uh oh! Looping through the draws...
+				long offset = commands.offset();
+				int stride = VkDrawIndexedIndirectCommand.SIZEOF;
+				for(int i = 0; i < drawCount; i++){
+					VK10.vkCmdDrawIndexedIndirect(commandBuffer(), buf, offset + (long) i *stride, 1, stride);
+				}
+			}
 		} else {
 			throw new IllegalStateException("Pipeline is missing or not valid");
 		}
@@ -288,7 +299,16 @@ public class Vk11RenderPass implements RenderPassBackend {
 	public void drawIndirect(final @NotNull GpuBufferSlice commands, final int drawCount) {
 		if (pipeline != null && pipeline.isValid()) {
 			pushDescriptors();
-			VK10.vkCmdDrawIndirect(commandBuffer(), ((Vk11GpuBuffer)commands.buffer()).vkBuffer(), commands.offset(), drawCount, VkDrawIndirectCommand.SIZEOF);
+			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
+			if(device.realFeatures().multiDrawIndirect())
+				VK10.vkCmdDrawIndirect(commandBuffer(), buf, commands.offset(), drawCount, VkDrawIndirectCommand.SIZEOF);
+			else {
+				long offset = commands.offset();
+				int stride = VkDrawIndirectCommand.SIZEOF;
+				for(int i = 0; i < drawCount; i++){
+					VK10.vkCmdDrawIndirect(commandBuffer(), buf, offset + (long) i *stride, 1, stride);
+				}
+			}
 		} else {
 			throw new IllegalStateException("Pipeline is missing or not valid");
 		}
