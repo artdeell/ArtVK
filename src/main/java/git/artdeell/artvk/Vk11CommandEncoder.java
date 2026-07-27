@@ -301,7 +301,6 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 					RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> attachment = colorAttachments.get(i);
 					if (attachment.clearValue().isPresent()) {
 						Vector4fc color = attachment.clearValue().get();
-                        ArtVK.LOGGER.info("Clear value: "+color);
 						Vk11Utils.putArgb(clearValues.get(i).color(), color);
 					}
 				}
@@ -355,7 +354,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		}
 
         if(poolCapacityLow) {
-            ArtVK.LOGGER.info("Descriptor pool capacity is low, submitting out of order");
+            ArtVK.LOGGER.warn("Descriptor pool capacity is low, submitting out of order");
             submit();
         }
 	}
