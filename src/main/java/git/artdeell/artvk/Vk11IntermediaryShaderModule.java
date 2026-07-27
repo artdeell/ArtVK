@@ -23,7 +23,7 @@ import org.lwjgl.vulkan.VkShaderModuleCreateInfo;
 
 @Environment(EnvType.CLIENT)
 public record Vk11IntermediaryShaderModule(
-	String name, @Nullable ByteBuffer spirv, List<SpvUniformBuffer> uniformBuffers, List<SpvSampler> samplers, List<SpvVariable> outputs, List<SpvVariable> inputs,  long pushConstantRange
+	String name, @Nullable ByteBuffer spirv, List<SpvUniformBuffer> uniformBuffers, List<SpvSampler> samplers, List<SpvVariable> outputs, List<SpvVariable> inputs,  int pushConstantRange
 ) implements AutoCloseable {
 	public static final Vk11IntermediaryShaderModule INVALID = new Vk11IntermediaryShaderModule(
 		"invalid", null, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 0
@@ -34,7 +34,7 @@ public record Vk11IntermediaryShaderModule(
 		List<SpvSampler> samplers = new ArrayList<>();
 		List<SpvVariable> outputs = new ArrayList<>();
 		List<SpvVariable> inputs = new ArrayList<>();
-		long pushConstantRange = 0;
+		int pushConstantRange = 0;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			PointerBuffer pointer = stack.callocPointer(1);
@@ -108,7 +108,7 @@ public record Vk11IntermediaryShaderModule(
 				for(int i =0; i < spvcCount; i++){
 					long type = Spvc.spvc_compiler_get_type_handle(compiler, pc.get(i).type_id());
 					if(Spvc.spvc_compiler_get_declared_struct_size(compiler, type, size) == Spvc.SPVC_SUCCESS){
-						pushConstantRange = Math.max(pushConstantRange, size.get());
+						pushConstantRange = Math.toIntExact(Math.max(pushConstantRange, size.get()));
 					}
 					else {
 						ArtVK.LOGGER.error("Failed to get declared push constant struct size!");

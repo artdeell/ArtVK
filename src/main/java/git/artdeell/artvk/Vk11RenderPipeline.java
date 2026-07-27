@@ -35,7 +35,7 @@ public record Vk11RenderPipeline(
 
 	public static Vk11RenderPipeline compile(
 		final Vk11Device device, final Vk11BindGroupLayout layout, final RenderPipeline pipeline, final long vertexModule, final long fragmentModule,
-		final long vkRenderPassWithDepth, final long vkRenderPassWithoutDepth, final long pushConstantRange
+		final long vkRenderPassWithDepth, final long vkRenderPassWithoutDepth, final int pushConstantRange
 	) {
 		long pipelineLayout;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -46,7 +46,7 @@ public record Vk11RenderPipeline(
 				VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack)
 						.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
 						.offset(0)
-						.size((int) pushConstantRange);
+						.size(pushConstantRange);
 				createInfo.pPushConstantRanges(range);
 			}
 			LongBuffer pointer = stack.callocLong(1);

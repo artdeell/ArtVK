@@ -299,7 +299,7 @@ public class Vk11Device implements GpuDeviceBackend {
 			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);
 		}
 
-		long pushConstantRange = Math.max(vertexShader.pushConstantRange(), fragmentShader.pushConstantRange());
+		int pushConstantRange = Math.max(vertexShader.pushConstantRange(), fragmentShader.pushConstantRange());
 
 		try {
 			Vk11GlslCompiler.CompiledModules modules = this.glslCompiler.compile(this, pipeline, vertexShader, fragmentShader);
