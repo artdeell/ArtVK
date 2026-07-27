@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
@@ -103,22 +104,19 @@ public record Vk11IntermediaryShaderModule(
 				spvcList = pointer.get(0);
 				spvcCount = countPointer.get(0);
 				Buffer pc = SpvcReflectedResource.create(spvcList, (int) spvcCount);
-				for(int i = 0; i < spvcCount; i++){
-					SpvcReflectedResource resource = pc.get(i);
-					long typeHandle = Spvc.spvc_compiler_get_type_handle(compiler, resource.base_type_id());
-					if (typeHandle == 0) continue;
-					int memberCount = Spvc.spvc_type_get_num_member_types(typeHandle);
-					int size = 0;
-					for (int m = 0; m < memberCount; m++) {
-						int memberTypeId = Spvc.spvc_type_get_member_type(typeHandle, m);
-						long memberHandle = Spvc.spvc_compiler_get_type_handle(compiler, memberTypeId);
-						int vecSize = Spvc.spvc_type_get_vector_size(memberHandle);
-						int columns = Spvc.spvc_type_get_columns(memberHandle);
-						int bitWidth = Spvc.spvc_type_get_bit_width(memberHandle);
-						int memberSize = (bitWidth / 8) * vecSize * columns;
-						size += memberSize;
+				PointerBuffer size = stack.callocPointer(1);
+				for(int i =0; i < spvcCount; i++){
+					int resourceId = pc.get(i).type_id();
+					long type = Spvc.spvc_compiler_get_type_handle(compiler, resourceId);
+					int result = Spvc.spvc_compiler_get_declared_struct_size(compiler, type, size);
+					if(result == Spvc.SPVC_SUCCESS){
+						long pushConstant = size.get();
+						pushConstantRange = Math.max(pushConstantRange, pushConstant);
+
 					}
-					if(size > pushConstantRange) pushConstantRange = size;
+					else {
+						ArtVK.LOGGER.error("Failed to get declared push constant struct size!");
+					}
 				}
 			} finally {
 				Spvc.spvc_context_destroy(context);
