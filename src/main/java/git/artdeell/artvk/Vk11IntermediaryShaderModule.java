@@ -106,13 +106,9 @@ public record Vk11IntermediaryShaderModule(
 				Buffer pc = SpvcReflectedResource.create(spvcList, (int) spvcCount);
 				PointerBuffer size = stack.callocPointer(1);
 				for(int i =0; i < spvcCount; i++){
-					int resourceId = pc.get(i).type_id();
-					long type = Spvc.spvc_compiler_get_type_handle(compiler, resourceId);
-					int result = Spvc.spvc_compiler_get_declared_struct_size(compiler, type, size);
-					if(result == Spvc.SPVC_SUCCESS){
-						long pushConstant = size.get();
-						pushConstantRange = Math.max(pushConstantRange, pushConstant);
-
+					long type = Spvc.spvc_compiler_get_type_handle(compiler, pc.get(i).type_id());
+					if(Spvc.spvc_compiler_get_declared_struct_size(compiler, type, size) == Spvc.SPVC_SUCCESS){
+						pushConstantRange = Math.max(pushConstantRange, size.get());
 					}
 					else {
 						ArtVK.LOGGER.error("Failed to get declared push constant struct size!");
