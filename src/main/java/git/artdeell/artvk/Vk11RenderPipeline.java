@@ -46,7 +46,7 @@ public record Vk11RenderPipeline(
 				VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack)
 						.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
 						.offset(0)
-						.size(20);
+						.size((int) pushConstantRange);
 				createInfo.pPushConstantRanges(range);
 			}
 			LongBuffer pointer = stack.callocLong(1);
