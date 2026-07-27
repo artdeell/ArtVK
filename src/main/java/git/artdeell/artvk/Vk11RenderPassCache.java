@@ -1,16 +1,16 @@
 package git.artdeell.artvk;
 
-import java.util.HashMap;
 import java.nio.LongBuffer;
 import java.util.ArrayList;
 import java.util.List;
+
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkAttachmentDescription;
 import org.lwjgl.vulkan.VkAttachmentReference;
-import org.lwjgl.vulkan.VkFramebufferCreateInfo;
 import org.lwjgl.vulkan.VkRenderPassCreateInfo;
 import org.lwjgl.vulkan.VkSubpassDependency;
 import org.lwjgl.vulkan.VkSubpassDescription;
@@ -18,21 +18,20 @@ import org.lwjgl.vulkan.VkSubpassDescription;
 @Environment(EnvType.CLIENT)
 public class Vk11RenderPassCache implements Destroyable {
 	private final Vk11Device device;
-	private final HashMap<Long, Long> renderPassCache = new HashMap<>();
-	private final HashMap<Long, Long> framebufferCache = new HashMap<>();
+    private final Long2LongOpenHashMap renderPassCache = new Long2LongOpenHashMap();
 
 	public Vk11RenderPassCache(final Vk11Device device) {
 		this.device = device;
 	}
 
 	public long getOrCreateRenderPass(
-		final List<Integer> colorFormats,
+		final int[] colorFormats,
 		final boolean hasDepth,
 		final int depthFormat
 	) {
 		long key = computeRenderPassKey(colorFormats, hasDepth, depthFormat);
-		Long cached = this.renderPassCache.get(key);
-		if (cached != null) {
+		long cached = this.renderPassCache.get(key);
+		if (cached != 0L) {
 			return cached;
 		}
 
@@ -41,33 +40,16 @@ public class Vk11RenderPassCache implements Destroyable {
 		return renderPass;
 	}
 
-	public long getOrCreateFramebuffer(
-		final long renderPass,
-		final int width,
-		final int height,
-		final long[] imageViews
-	) {
-		long key = computeFramebufferKey(renderPass, width, height, imageViews);
-		Long cached = this.framebufferCache.get(key);
-		if (cached != null) {
-			return cached;
-		}
-
-		long framebuffer = createFramebuffer(renderPass, width, height, imageViews);
-		this.framebufferCache.put(key, framebuffer);
-		return framebuffer;
-	}
-
-	private long createRenderPass(final List<Integer> colorFormats, final boolean hasDepth, final int depthFormat) {
+	private long createRenderPass(final int[] colorFormats, final boolean hasDepth, final int depthFormat) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			int attachmentCount = colorFormats.size() + (hasDepth ? 1 : 0);
+			int attachmentCount = colorFormats.length + (hasDepth ? 1 : 0);
 			VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(attachmentCount, stack);
 			List<VkAttachmentReference> colorRefs = new ArrayList<>();
 			VkAttachmentReference depthRef = null;
 
-			for (int i = 0; i < colorFormats.size(); i++) {
+			for (int i = 0; i < colorFormats.length; i++) {
 				VkAttachmentDescription att = attachments.get(i);
-				att.format(colorFormats.get(i));
+				att.format(colorFormats[i]);
 				att.samples(VK10.VK_SAMPLE_COUNT_1_BIT);
 				att.loadOp(VK10.VK_ATTACHMENT_LOAD_OP_LOAD);
 				att.storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
@@ -83,7 +65,7 @@ public class Vk11RenderPassCache implements Destroyable {
 			}
 
 			if (hasDepth) {
-				VkAttachmentDescription att = attachments.get(colorFormats.size());
+				VkAttachmentDescription att = attachments.get(colorFormats.length);
 				att.format(depthFormat);
 				att.samples(VK10.VK_SAMPLE_COUNT_1_BIT);
 				att.loadOp(VK10.VK_ATTACHMENT_LOAD_OP_LOAD);
@@ -94,7 +76,7 @@ public class Vk11RenderPassCache implements Destroyable {
 				att.finalLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 
 				depthRef = VkAttachmentReference.calloc(stack);
-				depthRef.attachment(colorFormats.size());
+				depthRef.attachment(colorFormats.length);
 				depthRef.layout(VK10.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 			}
 
@@ -133,27 +115,7 @@ public class Vk11RenderPassCache implements Destroyable {
 		}
 	}
 
-	private long createFramebuffer(final long renderPass, final int width, final int height, final long[] imageViews) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkFramebufferCreateInfo framebufferInfo = VkFramebufferCreateInfo.calloc(stack)
-				.sType$Default()
-				.renderPass(renderPass)
-				.width(width)
-				.height(height)
-				.layers(1);
-
-			if (imageViews.length > 0) {
-				framebufferInfo.attachmentCount(imageViews.length);
-				framebufferInfo.pAttachments(stack.longs(imageViews));
-			}
-
-			LongBuffer pointer = stack.callocLong(1);
-			Vk11Utils.crashIfFailure(VK10.vkCreateFramebuffer(device.vkDevice(), framebufferInfo, null, pointer), "Failed to create VkFramebuffer");
-			return pointer.get(0);
-		}
-	}
-
-	private static long computeRenderPassKey(final List<Integer> colorFormats, final boolean hasDepth, final int depthFormat) {
+	private static long computeRenderPassKey(final int[] colorFormats, final boolean hasDepth, final int depthFormat) {
 		long key = 0;
 		for (int fmt : colorFormats) {
 			key = key * 31 + fmt;
@@ -165,29 +127,15 @@ public class Vk11RenderPassCache implements Destroyable {
 		return key;
 	}
 
-	private static long computeFramebufferKey(final long renderPass, final int width, final int height, final long[] imageViews) {
-		long key = renderPass;
-		key = key * 31 + width;
-		key = key * 31 + height;
-		for (long iv : imageViews) {
-			key = key * 31 + iv;
-		}
-		return key;
-	}
-
-	public void invalidateFramebuffers() {
-		for (long fb : this.framebufferCache.values()) {
-			VK10.vkDestroyFramebuffer(device.vkDevice(), fb, null);
-		}
-		this.framebufferCache.clear();
-	}
+    private void invalidateRenderPasses() {
+        for (long rp : this.renderPassCache.values()) {
+            VK10.vkDestroyRenderPass(device.vkDevice(), rp, null);
+        }
+        this.renderPassCache.clear();
+    }
 
 	@Override
 	public void destroy() {
-		for (long rp : this.renderPassCache.values()) {
-			VK10.vkDestroyRenderPass(device.vkDevice(), rp, null);
-		}
-		this.renderPassCache.clear();
-		this.invalidateFramebuffers();
+		this.invalidateRenderPasses();
 	}
 }

@@ -39,13 +39,13 @@ public record Vk11Queue(VkQueue vkQueue, int queueFamilyIndex) {
         private final LongArrayList signalSemaphores = new LongArrayList();
 		private final ReferenceArrayList<VkCommandBuffer> commandBuffers = new ReferenceArrayList<>();
 
-		public Submission waitSemaphore(final long vkSemaphore, final long value, final int stageMask) {
+		public Submission waitSemaphore(final long vkSemaphore, final int stageMask) {
 			this.waitSemaphores.add(vkSemaphore);
 			this.waitDstStageMasks.add(stageMask);
 			return this;
 		}
 
-		public Submission signalSemaphore(final long vkSemaphore, final long value, final long stageMask) {
+		public Submission signalSemaphore(final long vkSemaphore) {
 			this.signalSemaphores.add(vkSemaphore);
 			return this;
 		}

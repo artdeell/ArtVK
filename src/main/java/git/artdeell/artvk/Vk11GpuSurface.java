@@ -21,22 +21,7 @@ import org.jspecify.annotations.Nullable;
 import org.lwjgl.glfw.GLFWVulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
-import org.lwjgl.vulkan.KHRSurface;
-import org.lwjgl.vulkan.KHRSwapchain;
-import org.lwjgl.vulkan.VK10;
-import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkExtent2D;
-import org.lwjgl.vulkan.VkImageBlit;
-import org.lwjgl.vulkan.VkImageMemoryBarrier;
-import org.lwjgl.vulkan.VkImageSubresourceLayers;
-import org.lwjgl.vulkan.VkImageSubresourceRange;
-import org.lwjgl.vulkan.VkMemoryBarrier;
-import org.lwjgl.vulkan.VkOffset3D;
-import org.lwjgl.vulkan.VkPresentInfoKHR;
-import org.lwjgl.vulkan.VkQueue;
-import org.lwjgl.vulkan.VkSurfaceCapabilitiesKHR;
-import org.lwjgl.vulkan.VkSurfaceFormatKHR;
-import org.lwjgl.vulkan.VkSwapchainCreateInfoKHR;
+import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkSurfaceFormatKHR.Buffer;
 
 @Environment(EnvType.CLIENT)
@@ -50,6 +35,9 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 	private int swapchainWidth;
 	private int swapchainHeight;
 	private final LongList swapchainImages = new LongArrayList();
+    private long[] acquireSemaphores = null;
+    private long[] presentSemaphores = null;
+    private int currentAcquireSemaphore = 0;
 	private int currentImageIndex = NO_CURRENT_IMAGE;
 	private @Nullable SurfaceException eatenException = null;
 	private boolean swapchainSuboptimal;
@@ -143,6 +131,8 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 		if (this.swapchain != 0L) {
 			this.device.graphicsQueue().waitIdle();
 			KHRSwapchain.vkDestroySwapchainKHR(this.device.vkDevice(), this.swapchain, null);
+            destroySemaphores(presentSemaphores);
+            destroySemaphores(acquireSemaphores);
 			this.swapchain = 0L;
 		}
 	}
@@ -204,6 +194,12 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 				this.swapchainImages.add(swapchainImagesPtr.get(i));
 			}
 
+            acquireSemaphores = new long[swapchainImages.size()];
+            createSemaphores(acquireSemaphores);
+
+            presentSemaphores = new long[swapchainImages.size()];
+            createSemaphores(presentSemaphores);
+
 			this.swapchainSuboptimal = false;
 			this.swapchainOutOfDate = false;
 			this.swapchainWidth = config.width();
@@ -235,8 +231,8 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			IntBuffer frameIndexPtr = stack.callocInt(1);
 			frameIndexPtr.put(0, NO_CURRENT_IMAGE);
-			Vk11CommandEncoder commandEncoder = this.device.createCommandEncoder();
-			long acquireSemaphore = commandEncoder.acquireSemaphore();
+            currentAcquireSemaphore = (currentAcquireSemaphore + 1) % acquireSemaphores.length;
+			long acquireSemaphore = acquireSemaphores[currentAcquireSemaphore];
 			int result = KHRSwapchain.vkAcquireNextImageKHR(this.device.vkDevice(), this.swapchain, 50000000000L, acquireSemaphore, 0L, frameIndexPtr);
 			if (result == VK10.VK_TIMEOUT) {
 				throw new IllegalStateException("GPU timeout attempting to acquire next frame");
@@ -358,8 +354,8 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 			);
 		}
 
-		vk11CommandEncoder.waitSemaphore(vk11CommandEncoder.acquireSemaphore(), 0L, VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
-        vk11CommandEncoder.signalSemaphore(vk11CommandEncoder.presentSemaphore(), 0L, VK10.VK_PIPELINE_STAGE_TRANSFER_BIT);
+		vk11CommandEncoder.waitSemaphore(acquireSemaphores[currentAcquireSemaphore], VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        vk11CommandEncoder.signalSemaphore(presentSemaphores[currentImageIndex]);
 	}
 
 	@Override
@@ -370,7 +366,7 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkPresentInfoKHR presentInfo = VkPresentInfoKHR.calloc(stack).sType$Default();
-			presentInfo.pWaitSemaphores(stack.longs(this.device.createCommandEncoder().submittedPresentSemaphore()));
+			presentInfo.pWaitSemaphores(stack.longs(this.presentSemaphores[this.currentImageIndex]));
 			presentInfo.swapchainCount(1);
 			presentInfo.pSwapchains(stack.longs(this.swapchain));
 			presentInfo.pImageIndices(stack.ints(this.currentImageIndex));
@@ -387,4 +383,19 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 			}
 		}
 	}
+
+    private void createSemaphores( long[] semaphores) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkSemaphoreCreateInfo createInfo = VkSemaphoreCreateInfo.calloc(stack).sType$Default();
+            LongBuffer ptr = stack.callocLong(1);
+            for(int i = 0; i < semaphores.length; i++) {
+                Vk11Utils.crashIfFailure(VK10.vkCreateSemaphore(device.vkDevice(), createInfo, null, ptr), "Failed to create semaphore");
+                semaphores[i] = ptr.get(0);
+            }
+        }
+    }
+
+    private void destroySemaphores(long[] semaphores) {
+        for(long s : semaphores) VK10.vkDestroySemaphore(device.vkDevice(), s, null);
+    }
 }

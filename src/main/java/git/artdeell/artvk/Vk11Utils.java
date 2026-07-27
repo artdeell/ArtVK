@@ -6,6 +6,8 @@ import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;
 import org.lwjgl.vulkan.VkClearColorValue;
 
+import java.util.Collection;
+
 @Environment(EnvType.CLIENT)
 public class Vk11Utils {
 	public static void throwIfFailure(final int result, final String message, final BackendCreationException.Reason reason) throws BackendCreationException {
@@ -53,6 +55,10 @@ public class Vk11Utils {
 			default -> "0x" + Integer.toHexString(error);
 		};
 	}
+
+    public static void parentClose(Collection<Dependent> dependents) {
+        for(Dependent dependent : dependents) dependent.parentClosed();
+    }
 
 	public static boolean hasAllBits(final int bitfield, final int bitmask) {
 		return (bitfield & bitmask) == bitmask;

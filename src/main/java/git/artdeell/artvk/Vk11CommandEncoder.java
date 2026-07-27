@@ -31,43 +31,21 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 	public static final int MAX_SUBMITS_IN_FLIGHT = 3;
 	private final Vk11Device device;
 	private final Vk11TransientMemory transientMemory;
-	private final long[] acquireSemaphores = new long[MAX_SUBMITS_IN_FLIGHT];
-	private final long[] presentSemaphores = new long[MAX_SUBMITS_IN_FLIGHT];
-	private final Vk11Fence[] frameFences = new Vk11Fence[MAX_SUBMITS_IN_FLIGHT];
+	private final Vk11Fence[] submitFences = new Vk11Fence[MAX_SUBMITS_IN_FLIGHT];
 	private int currentSubmitIndex = 0;
 	private Vk11Queue.Submission submissionBuilder;
 	private final DestructionQueue<Destroyable> destroyQueue = new DestructionQueue<>(MAX_SUBMITS_IN_FLIGHT, Destroyable::destroy);
 	private final Vk11CommandPool[] commandPools = new Vk11CommandPool[MAX_SUBMITS_IN_FLIGHT];
 	private @Nullable VkCommandBuffer currentCommandBuffer;
 	private @Nullable Vk11RenderPass currentRenderPass;
-	private long submittedPresentSemaphore;
 	private final java.util.ArrayList<Vk11DescriptorPool> descriptorPools = new java.util.ArrayList<>();
 
 	public Vk11CommandEncoder(final Vk11Device device) {
 		this.device = device;
 		this.transientMemory = new Vk11TransientMemory(device, this);
 
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkSemaphoreCreateInfo semaphoreCreateInfo = VkSemaphoreCreateInfo.calloc(stack).sType$Default();
-			LongBuffer semaphoreHandlePtr = stack.callocLong(1);
-
-			for (int i = 0; i < this.acquireSemaphores.length; i++) {
-				Vk11Utils.crashIfFailure(
-                        VK10.vkCreateSemaphore(device.vkDevice(), semaphoreCreateInfo, null, semaphoreHandlePtr), "Failed to create acquire VkSemaphore"
-				);
-				this.acquireSemaphores[i] = semaphoreHandlePtr.get(0);
-			}
-
-			for (int i = 0; i < this.presentSemaphores.length; i++) {
-				Vk11Utils.crashIfFailure(
-                        VK10.vkCreateSemaphore(device.vkDevice(), semaphoreCreateInfo, null, semaphoreHandlePtr), "Failed to create present VkSemaphore"
-				);
-				this.presentSemaphores[i] = semaphoreHandlePtr.get(0);
-			}
-		}
-
 		for (int i = 0; i < MAX_SUBMITS_IN_FLIGHT; i++) {
-			this.frameFences[i] = new Vk11Fence(device, true);
+			this.submitFences[i] = new Vk11Fence(device, true);
 			this.commandPools[i] = new Vk11CommandPool(device, device.graphicsQueue());
 		}
 
@@ -86,9 +64,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 
 		for (int i = 0; i < MAX_SUBMITS_IN_FLIGHT; i++) {
 			this.commandPools[i].destroy();
-			this.frameFences[i].destroy();
-			VK10.vkDestroySemaphore(this.device.vkDevice(), this.acquireSemaphores[i], null);
-			VK10.vkDestroySemaphore(this.device.vkDevice(), this.presentSemaphores[i], null);
+			this.submitFences[i].destroy();
 		}
 	}
 
@@ -139,12 +115,12 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		}
 	}
 
-	public void waitSemaphore(final long vkSemaphore, final long value, final int stageMask) {
+	public void waitSemaphore(final long vkSemaphore, final int stageMask) {
 		if (this.currentRenderPass != null) {
 			throw new IllegalStateException("Cannot add semaphore operation while inside RenderPass");
 		}
 
-		this.submissionBuilder.waitSemaphore(vkSemaphore, value, stageMask);
+		this.submissionBuilder.waitSemaphore(vkSemaphore, stageMask);
 	}
 
 	public void execute(final VkCommandBuffer commandBuffer) {
@@ -155,12 +131,12 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		this.submissionBuilder.executeCommands(commandBuffer);
 	}
 
-	public void signalSemaphore(final long vkSemaphore, final long value, final long stageMask) {
+	public void signalSemaphore(final long vkSemaphore) {
 		if (this.currentRenderPass != null) {
 			throw new IllegalStateException("Cannot add semaphore operation while inside RenderPass");
 		}
 
-		this.submissionBuilder.signalSemaphore(vkSemaphore, value, stageMask);
+		this.submissionBuilder.signalSemaphore(vkSemaphore);
 	}
 
 	private void memoryBarrier(final MemoryStack stack) {
@@ -182,39 +158,20 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		);
 	}
 
-    public boolean waitForFences(long... fences) {
-        int result = VK10.VK_TIMEOUT;
-        while(result == VK10.VK_TIMEOUT) {
-            result = VK10.vkWaitForFences(device.vkDevice(), fences, true, 1_000_000_000L);
-        }
-        Vk11Utils.crashIfFailure(result, "fence wait failed");
-        return true;
-    }
-
-    public void resetFences(long... fences) {
-        Vk11Utils.crashIfFailure(VK10.vkResetFences(device.vkDevice(), fences), "fence reset failed");
-    }
-
-    public void requireFencesComplete(long... fences) {
-        if(!waitForFences(fences)) throw new IllegalStateException("Failed to wait for completion fence");
-        resetFences(fences);
-    }
-
     @Override
 	public void submit() {
 		this.endCommandBuffer();
 		this.transientMemory.endSubmit();
-		this.submittedPresentSemaphore = this.presentSemaphores[this.currentSubmitIndex];
-        long lastFence = this.frameFences[this.currentSubmitIndex].vkFence();
 
-        requireFencesComplete(lastFence);
+        Vk11Fence lastFence = this.submitFences[this.currentSubmitIndex];
+        lastFence.autoWait();
 
-        this.submissionBuilder.close(lastFence);
+        this.submissionBuilder.close(lastFence.vkFence());
 		this.submissionBuilder = this.device.graphicsQueue().beginSubmit();
 
         currentSubmitIndex = (currentSubmitIndex + 1) % MAX_SUBMITS_IN_FLIGHT;
 
-        waitForFences(frameFences[currentSubmitIndex].vkFence());
+        submitFences[currentSubmitIndex].waitForever();
 
         for (Vk11DescriptorPool pool : this.descriptorPools) {
             pool.resetFrame(this.currentSubmitIndex);
@@ -230,105 +187,74 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		return this.transientMemory;
 	}
 
-	@Override
-	public @NotNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {
+    @Override
+    public @NotNull RenderPassBackend createRenderPass(final RenderPassDescriptor descriptor) {
+        try(MemoryStack memoryStack = MemoryStack.stackPush()) {
+            List<RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
+            RenderPassDescriptor.Attachment<@NotNull OptionalDouble> depthAttachment = descriptor.depthAttachment();
+            int colorCount = colorAttachments.size();
 
-		List<RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>>> colorAttachments = descriptor.colorAttachments();
-		Vk11GpuTextureView[] colorTextures = new Vk11GpuTextureView[colorAttachments.size()];
+            boolean hasDepth = depthAttachment != null;
+            Vk11GpuTextureView[] attachmentViews = new Vk11GpuTextureView[colorCount + (hasDepth ? 1 : 0)];
 
-        MemoryStack transStack = MemoryStack.stackGet();
-		for (int i = 0; i < colorAttachments.size(); i++) {
-			RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> attachment = colorAttachments.get(i);
-            if(attachment == null) {
-                colorTextures[i] = null;
-                continue;
+            VkClearValue.Buffer clearValues = VkClearValue.calloc(attachmentViews.length, memoryStack);
+            int[] colorFormats = new int[colorCount];
+            int depthFormat = VK10.VK_FORMAT_UNDEFINED;
+
+            for (int i = 0; i < colorCount; i++) {
+                RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> attachment = colorAttachments.get(i);
+                if(attachment == null) {
+                    attachmentViews[i] = null;
+                    colorFormats[i] = VK10.VK_FORMAT_UNDEFINED;
+                    continue;
+                }
+                Vk11GpuTextureView textureView = (Vk11GpuTextureView)attachment.textureView();
+                textureView.disableTransferMode(memoryStack, currentCommandBuffer);
+                attachmentViews[i] = textureView;
+                colorFormats[i] = Vk11Const.toVk(textureView.texture().getFormat());
+                if(attachment.clearValue().isPresent()) {
+                    Vk11Utils.putArgb(clearValues.get(i).color(), attachment.clearValue().get());
+                }
             }
-            Vk11GpuTextureView textureView = (Vk11GpuTextureView)attachment.textureView();
-            textureView.disableTransferMode(transStack, currentCommandBuffer);
-			colorTextures[i] = textureView;
-		}
+            if(hasDepth) {
+                attachmentViews[colorCount] = (Vk11GpuTextureView) depthAttachment.textureView();
+                depthFormat = Vk11Const.toVk(depthAttachment.textureView().texture().getFormat());
+                if(depthAttachment.clearValue().isPresent()) {
+                    clearValues.get(colorCount).depthStencil().depth((float) depthAttachment.clearValue().getAsDouble());
+                }
+            }
 
-		RenderPassDescriptor.Attachment<@NotNull OptionalDouble> depthAttachment = descriptor.depthAttachment();
-		this.device.instance().debug().beginDebugGroup(this.commandBuffer(), descriptor.label());
+            this.device.instance().debug().beginDebugGroup(this.commandBuffer(), descriptor.label());
 
-		int width = 0;
-		int height = 0;
-		if (!colorAttachments.isEmpty()) {
-			for (RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> colorAttachment : colorAttachments) {
-				if (colorAttachment != null) {
-					GpuTextureView colorTexture = colorAttachment.textureView();
-					width = colorTexture.getWidth(0);
-					height = colorTexture.getHeight(0);
-				}
-			}
-		} else if (depthAttachment != null) {
-			width = depthAttachment.textureView().getWidth(0);
-			height = depthAttachment.textureView().getHeight(0);
-		}
+            int width = 0, height = 0;
+            for(Vk11GpuTextureView view : attachmentViews) {
+                if(view == null) continue;
+                width = view.getWidth(0);
+                height = view.getHeight(0);
+                break;
+            }
 
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			// Build color formats list
-			List<Integer> colorFormats = new java.util.ArrayList<>();
-			for (Vk11GpuTextureView cv : colorTextures) {
-				if (cv != null) {
-					colorFormats.add(Vk11Const.toVk(cv.texture().getFormat()));
-				} else {
-					colorFormats.add(VK10.VK_FORMAT_UNDEFINED);
-				}
-			}
+            long renderPass = this.device.renderPassCache().getOrCreateRenderPass(colorFormats, hasDepth, depthFormat);
 
-			boolean hasDepth = depthAttachment != null;
-			int depthFormat = hasDepth ? Vk11Const.toVk(depthAttachment.textureView().texture().getFormat()) : VK10.VK_FORMAT_UNDEFINED;
+            long framebuffer = this.device.framebufferCache().getOrCreateFramebuffer(renderPass, width, height, attachmentViews);
 
-			long renderPass = this.device.renderPassCache().getOrCreateRenderPass(colorFormats, hasDepth, depthFormat);
+            // Begin render pass
+            VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.calloc(memoryStack).sType$Default();
+            renderPassBeginInfo.renderPass(renderPass);
+            renderPassBeginInfo.framebuffer(framebuffer);
+            renderPassBeginInfo.renderArea().offset().set(descriptor.renderArea != null ? descriptor.renderArea.x() : 0, descriptor.renderArea != null ? descriptor.renderArea.y() : 0);
+            renderPassBeginInfo.renderArea().extent().set(width, height);
+            renderPassBeginInfo.pClearValues(clearValues);
+            renderPassBeginInfo.clearValueCount(attachmentViews.length);
 
-			// Build image views array for framebuffer
-			int viewCount = colorTextures.length + (hasDepth ? 1 : 0);
-			long[] imageViews = new long[viewCount];
-			for (int i = 0; i < colorTextures.length; i++) {
-				imageViews[i] = colorTextures[i] != null ? colorTextures[i].vkImageView() : 0L;
-			}
-			if (hasDepth) {
-				imageViews[colorTextures.length] = ((Vk11GpuTextureView)depthAttachment.textureView()).vkImageView();
-			}
+            VK10.vkCmdBeginRenderPass(this.commandBuffer(), renderPassBeginInfo, VK10.VK_SUBPASS_CONTENTS_INLINE);
 
-			long framebuffer = this.device.renderPassCache().getOrCreateFramebuffer(renderPass, width, height, imageViews);
-
-			// Build clear values
-			org.lwjgl.vulkan.VkClearValue.Buffer clearValues = VkClearValue.calloc(viewCount, stack);
-			for (int i = 0; i < colorTextures.length; i++) {
-				if (colorTextures[i] != null) {
-					RenderPassDescriptor.Attachment<@NotNull Optional<Vector4fc>> attachment = colorAttachments.get(i);
-					if (attachment.clearValue().isPresent()) {
-						Vector4fc color = attachment.clearValue().get();
-						Vk11Utils.putArgb(clearValues.get(i).color(), color);
-					}
-				}
-			}
-			if (hasDepth) {
-				OptionalDouble clearDepth = depthAttachment.clearValue();
-				if (clearDepth.isPresent()) {
-					clearValues.get(colorTextures.length).depthStencil(VkClearDepthStencilValue.calloc(stack).depth((float)clearDepth.getAsDouble()));
-				}
-			}
-
-			// Begin render pass
-			org.lwjgl.vulkan.VkRenderPassBeginInfo renderPassBeginInfo = org.lwjgl.vulkan.VkRenderPassBeginInfo.calloc(stack).sType$Default();
-			renderPassBeginInfo.renderPass(renderPass);
-			renderPassBeginInfo.framebuffer(framebuffer);
-			renderPassBeginInfo.renderArea().offset().set(descriptor.renderArea != null ? descriptor.renderArea.x() : 0, descriptor.renderArea != null ? descriptor.renderArea.y() : 0);
-			renderPassBeginInfo.renderArea().extent().set(width, height);
-			renderPassBeginInfo.pClearValues(clearValues);
-			renderPassBeginInfo.clearValueCount(viewCount);
-
-			VK10.vkCmdBeginRenderPass(this.commandBuffer(), renderPassBeginInfo, VK10.VK_SUBPASS_CONTENTS_INLINE);
-		}
-
-		this.currentRenderPass = new Vk11RenderPass(
-			this.device, this, this.commandBuffer(), descriptor.renderArea, width, height, depthAttachment != null, descriptor.label()
-		);
-		return this.currentRenderPass;
-	}
+            this.currentRenderPass = new Vk11RenderPass(
+                    this.device, this, this.commandBuffer(), descriptor.renderArea, width, height, hasDepth, descriptor.label()
+            );
+            return this.currentRenderPass;
+        }
+    }
 
     private boolean poolCapacityLow() {
         for(Vk11DescriptorPool pool : descriptorPools) {
@@ -629,17 +555,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 
 	@Override
 	public @NotNull GpuFence createFence() {
-        return new GpuFence() {
-            // Don't gaf
-            // Maybe TODO: implement fence for previous frame's submit
-            @Override
-            public void close() {}
-
-            @Override
-            public boolean awaitCompletion(long timeoutNS) {
-                return true;
-            }
-        };
+        return submitFences[currentSubmitIndex];
 	}
 
 	@Override
@@ -668,20 +584,6 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 			);
 			return timestampPtr.get(0);
 		}
-	}
-
-	public long acquireSemaphore() {
-        assert acquireSemaphores.length == MAX_SUBMITS_IN_FLIGHT;
-		return this.acquireSemaphores[this.currentSubmitIndex];
-	}
-
-	public long presentSemaphore() {
-        assert presentSemaphores.length == MAX_SUBMITS_IN_FLIGHT;
-		return this.presentSemaphores[this.currentSubmitIndex];
-	}
-
-	public long submittedPresentSemaphore() {
-		return this.submittedPresentSemaphore;
 	}
 
 	public int currentSubmitIndex() {

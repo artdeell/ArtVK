@@ -2,6 +2,9 @@ package git.artdeell.artvk;
 
 import com.mojang.blaze3d.textures.GpuTextureView;
 import java.nio.LongBuffer;
+import java.util.HashSet;
+import java.util.Set;
+
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jetbrains.annotations.NotNull;
@@ -10,6 +13,7 @@ import org.lwjgl.vulkan.*;
 
 @Environment(EnvType.CLIENT)
 public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
+    private final Set<Dependent> dependents = new HashSet<>();
 	private final Vk11Device device;
 	private final long vkImageView;
 	private boolean closed;
@@ -39,8 +43,6 @@ public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
 		texture.addViews();
 	}
 
-
-
     void enableTransferMode(MemoryStack memoryStack, VkCommandBuffer currentCommandBuffer) {
         texture().enableTransferMode(memoryStack, currentCommandBuffer, baseMipLevel());
     }
@@ -49,6 +51,10 @@ public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
         texture().postTransferBarrier(memoryStack, currentCommandBuffer);
     }
 
+    public void addDependent(Dependent destroyable) {
+        dependents.add(destroyable);
+    }
+    
 	@Override
 	public void destroy() {
 		VK10.vkDestroyImageView(this.device.vkDevice(), this.vkImageView, null);
@@ -56,11 +62,11 @@ public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
 
 	@Override
 	public void close() {
-		if (!this.closed) {
-			this.closed = true;
-			this.device.createCommandEncoder().queueForDestroy(this);
-			this.texture().removeViews();
-		}
+        if(this.closed) return;
+        this.closed = true;
+        this.device.createCommandEncoder().queueForDestroy(this);
+        this.texture().removeViews();
+        Vk11Utils.parentClose(dependents);
 	}
 
 	@Override

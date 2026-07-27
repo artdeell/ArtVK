@@ -38,7 +38,6 @@ import net.minecraft.client.renderer.ShaderDefines;
 import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
-import org.lwjgl.util.vma.Vma;
 import org.lwjgl.vulkan.*;
 
 @Environment(EnvType.CLIENT)
@@ -59,6 +58,7 @@ public class Vk11Device implements GpuDeviceBackend {
     public final boolean hasFillModeNonSolid, hasAnisotropy, hasAttributeDivisor;
 	private final Vk11CommandEncoder commandEncoder;
 	private final Vk11RenderPassCache renderPassCache;
+    private final Vk11FramebufferCache framebufferCache;
 
 	public Vk11Device(
 		final ShaderSource defaultShaderSource,
@@ -136,6 +136,7 @@ public class Vk11Device implements GpuDeviceBackend {
 			&& physicalDevice.vkPhysicalDeviceDriverProperties().driverID() == 14;
 		physicalDevice.close();
 		this.renderPassCache = new Vk11RenderPassCache(this);
+        this.framebufferCache = new Vk11FramebufferCache(this);
 		this.commandEncoder = new Vk11CommandEncoder(this);
 	}
 
@@ -143,8 +144,9 @@ public class Vk11Device implements GpuDeviceBackend {
 	public void close() {
 		this.commandEncoder.destroy();
 		this.clearPipelineCache();
+        this.framebufferCache.destroy();
 		this.renderPassCache.destroy();
-		vmaObj.close();;
+		vmaObj.close();
 		VK10.vkDestroyDevice(this.vkDevice, null);
 		this.instance.close();
 		this.glslCompiler.close();
@@ -183,6 +185,10 @@ public class Vk11Device implements GpuDeviceBackend {
 		return this.renderPassCache;
 	}
 
+    public Vk11FramebufferCache framebufferCache() {
+        return this.framebufferCache;
+    }
+    
 	@Override
 	public @NotNull GpuSurfaceBackend createSurface(final long windowHandle) {
 		return new Vk11GpuSurface(this, windowHandle);
@@ -310,14 +316,15 @@ public class Vk11Device implements GpuDeviceBackend {
 
 		try {
 			Vk11GlslCompiler.CompiledModules modules = this.glslCompiler.compile(this, pipeline, vertexShader, fragmentShader);
-			List<Integer> colorFormats = new java.util.ArrayList<>();
-			for (ColorTargetState cts : pipeline.getColorTargetStates()) {
-				if (cts != null && cts.format() != null) {
-					colorFormats.add(Vk11Const.toVk(cts.format()));
-				} else {
-					colorFormats.add(VK10.VK_FORMAT_R8G8B8A8_UNORM);
-				}
-			}
+            ColorTargetState[] states = pipeline.getColorTargetStates();
+            int[] colorFormats = new int[states.length];
+
+            for(int i = 0; i < states.length; i++) {
+                ColorTargetState state = states[i];
+                if(state != null) colorFormats[i] = Vk11Const.toVk(state.format());
+                else colorFormats[i] = VK10.VK_FORMAT_UNDEFINED;
+            }
+
 			int depthFormat = VK10.VK_FORMAT_D32_SFLOAT;
 			long renderPassWithDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, true, depthFormat);
 			long renderPassWithoutDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
