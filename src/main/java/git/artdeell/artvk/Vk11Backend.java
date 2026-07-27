@@ -11,6 +11,8 @@ import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap.Entry;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
+
+import java.io.File;
 import java.nio.IntBuffer;
 import java.util.Collection;
 import java.util.HashSet;
@@ -210,6 +212,11 @@ public class Vk11Backend implements GpuBackend {
                 ArtVK.LOGGER.warn("Device [{}] does not support required extensions, missing: {}", deviceName, missingExtensions);
                 isSuitableDevice = false;
             }
+
+			if(new File(".").getAbsolutePath().contains("ca.dnamobile.javalauncher")) {
+				ArtVK.LOGGER.warn("Device [{}] does not support running in this environment", deviceName);
+				isSuitableDevice = false;
+			}
 
             if (isSuitableDevice) {
                 ArtVK.LOGGER.debug("Device [{}] is suitable", deviceName);
