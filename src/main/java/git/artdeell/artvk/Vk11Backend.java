@@ -56,6 +56,15 @@ public class Vk11Backend implements GpuBackend {
 		}
 	}
 
+	public static void enableDeviceExtensions(Set<String> deviceExtensions, Vk11PhysicalDevice physicalDevice, String... extensions){
+		for(String ext : extensions){
+			if(physicalDevice.hasDeviceExtension(ext)){
+                ArtVK.LOGGER.info("Enabling device extension {}", ext);
+				deviceExtensions.add(ext);
+			}
+		}
+	}
+
 	@Override
 	public @NotNull GpuDevice createDevice(
             final long window,
@@ -83,38 +92,21 @@ public class Vk11Backend implements GpuBackend {
             boolean useDebugLabels = debugOptions.useLabels() || renderdocAttached;
 			instance = new Vk11Instance(debugOptions.logLevel(), useDebugLabels, validation);
 			physicalDevice = findPhysicalDevice(instance);
-
-			if (physicalDevice.hasDeviceExtension("VK_KHR_portability_subset")) {
-				deviceExtensions.add("VK_KHR_portability_subset");
-			}
-
+			enableDeviceExtensions(deviceExtensions, physicalDevice,
+					"VK_KHR_portability_subset",
+					"VK_EXT_multi_draw",
+					"VK_EXT_vertex_attribute_divisor"
+					);
             if(useDebugLabels) {
-                if (physicalDevice.hasDeviceExtension("VK_AMD_buffer_marker")) {
-                    deviceExtensions.add("VK_AMD_buffer_marker");
-                } else if (physicalDevice.hasDeviceExtension("VK_NV_device_diagnostic_checkpoints")) {
-                    deviceExtensions.add("VK_NV_device_diagnostic_checkpoints");
-                }
+				enableDeviceExtensions(deviceExtensions, physicalDevice, "VK_AMD_buffer_marker", "VK_NV_device_diagnostic_checkpoints");
             }
-
-			if (physicalDevice.hasDeviceExtension("VK_EXT_multi_draw")) {
-				deviceExtensions.add("VK_EXT_multi_draw");
-			}
-
-            if(physicalDevice.hasDeviceExtension("VK_EXT_vertex_attribute_divisor")) {
-                deviceExtensions.add("VK_EXT_vertex_attribute_divisor");
-            }
-
 			device = createVkDevice(deviceExtensions, physicalDevice);
 			vma = new IntVMA(device);
 		} catch (BackendCreationException e) {
 			if(vma != null) vma.close();
-
 			if (device != null) VK10.vkDestroyDevice(device, null);
-
 			if (physicalDevice != null) physicalDevice.close();
-
 			if (instance != null) instance.close();
-
 			throw e;
 		}
 
