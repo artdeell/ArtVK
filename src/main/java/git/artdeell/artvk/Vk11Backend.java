@@ -88,7 +88,7 @@ public class Vk11Backend implements GpuBackend {
 
 		try {
 			boolean renderdocAttached = "1".equals(System.getenv("ENABLE_VULKAN_RENDERDOC_CAPTURE"));
-			boolean validation = "true".equalsIgnoreCase(System.getProperty("dogshitvk.validation", "false"));
+			boolean validation = Boolean.getBoolean("artvk.validation");
             boolean useDebugLabels = debugOptions.useLabels() || renderdocAttached;
 			instance = new Vk11Instance(debugOptions.logLevel(), useDebugLabels, validation);
 			physicalDevice = findPhysicalDevice(instance);
