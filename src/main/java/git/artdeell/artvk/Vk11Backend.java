@@ -261,6 +261,21 @@ public class Vk11Backend implements GpuBackend {
 		throw new BackendCreationException("Device missing capabilities", mostProminentReason, missingCapabilities);
 	}
 
+	private static void enableExtensionFeatures(MemoryStack stack, VkPhysicalDeviceFeatures2 features, Collection<String> deviceExtensions){
+		if(deviceExtensions.contains("VK_EXT_vertex_attribute_divisor")){
+			VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vaf = VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT.calloc(stack).sType$Default();
+			vaf.vertexAttributeInstanceRateDivisor(true);
+			features.pNext(vaf);
+		}
+		// This was promoted to core only in 1.1, but we are planning on targeting 1.0
+		// Though not all 1.0 devices have this extension, so we need to think about it a bit more...
+		if(deviceExtensions.contains("VK_KHR_shader_draw_parameters")){
+			VkPhysicalDeviceShaderDrawParametersFeatures sdp = VkPhysicalDeviceShaderDrawParametersFeatures.calloc(stack).sType$Default();
+			sdp.shaderDrawParameters(true);
+			features.pNext(sdp);
+		}
+	}
+
 	private static VkDevice createVkDevice(
 		final Collection<String> deviceExtensions, final Vk11PhysicalDevice physicalDevice
 	) throws BackendCreationException {
@@ -273,15 +288,7 @@ public class Vk11Backend implements GpuBackend {
 			deviceFeatures.features().fillModeNonSolid(availableFeatures.features().fillModeNonSolid());
 			deviceFeatures.features().samplerAnisotropy(availableFeatures.features().samplerAnisotropy());
 
-			// Enable VK10 shaderDrawParameters via pNext chain
-			VkPhysicalDeviceVulkan11Features vk11Features = VkPhysicalDeviceVulkan11Features.calloc(stack).sType$Default();
-			vk11Features.shaderDrawParameters(true);
-			deviceFeatures.pNext(vk11Features.address());
-
-			// Enable VK10 vertexAttributeDivisor via pNext chain (EXT extension)
-			VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vertexDivisorFeatures = VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT.calloc(stack).sType$Default();
-			vertexDivisorFeatures.vertexAttributeInstanceRateDivisor(true);
-			vk11Features.pNext(vertexDivisorFeatures.address());
+			enableExtensionFeatures(stack, deviceFeatures, deviceExtensions);
 
 			Int2IntMap queuesToCreate = physicalDevice.queueFamilyCreateInfoMap();
 			Buffer queueCreationInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
