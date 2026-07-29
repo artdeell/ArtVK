@@ -16,7 +16,6 @@ import net.minecraft.client.renderer.ShaderDefines;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.spvc.Spv;
 import org.lwjgl.util.shaderc.Shaderc;
-import org.lwjgl.vulkan.VK11;
 
 @Environment(EnvType.CLIENT)
 public class Vk11GlslCompiler implements AutoCloseable {
@@ -24,8 +23,8 @@ public class Vk11GlslCompiler implements AutoCloseable {
 	private final long shaderOptions = Shaderc.shaderc_compile_options_initialize();
 	private final ShaderDefines globalDefines;
 
-	public Vk11GlslCompiler() {
-		Shaderc.shaderc_compile_options_set_target_env(this.shaderOptions, Shaderc.shaderc_target_env_vulkan, VK11.VK_API_VERSION_1_1);
+	public Vk11GlslCompiler(int apiTarget) {
+		Shaderc.shaderc_compile_options_set_target_env(this.shaderOptions, Shaderc.shaderc_target_env_vulkan, apiTarget);
 		Shaderc.shaderc_compile_options_set_auto_bind_uniforms(this.shaderOptions, true);
 		Shaderc.shaderc_compile_options_set_auto_map_locations(this.shaderOptions, true);
 		Shaderc.shaderc_compile_options_set_generate_debug_info(this.shaderOptions);

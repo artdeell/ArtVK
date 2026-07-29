@@ -161,6 +161,10 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 		return this.vkDeviceExtensions.stream().anyMatch(e -> e.extensionNameString().equals(name));
 	}
 
+    public int normalizedApiVersion() {
+        return Vk11Utils.normalizeApiVersion(properties.apiVersion);
+    }
+
 	public Set<String> getMissingExtensions(final Collection<String> required) {
 		Set<String> remaining = new HashSet<>(required);
 

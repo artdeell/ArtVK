@@ -27,14 +27,15 @@ import org.lwjgl.vulkan.VkDeviceQueueCreateInfo.Buffer;
 
 @Environment(EnvType.CLIENT)
 public class Vk11Backend implements GpuBackend {
+    public static final String NAME = "ArtVK";
     public static final Set<String> REQUIRED_DEVICE_EXTENSIONS = Set.of(
 		"VK_KHR_swapchain"
 	);
 
 	@Override
 	public @NotNull String getName() {
-		return "ArtVK";
-	}
+		return NAME;
+    }
 
 	@Override
 	public void setWindowHints() {
@@ -76,7 +77,11 @@ public class Vk11Backend implements GpuBackend {
 			instance = new Vk11Instance(debugOptions.logLevel(), useDebugLabels, validation);
 			physicalDevice = findPhysicalDevice(instance);
 			device = createVkDevice(physicalDevice);
-			vma = new IntVMA(device);
+            // VMA calls Vulkan APIs so pick the lowest of either the instance or device version
+			vma = new IntVMA(
+                    device,
+                    Math.min(instance.apiTarget, physicalDevice.normalizedApiVersion())
+            );
 		} catch (BackendCreationException e) {
 			if(vma != null) vma.close();
 
@@ -127,7 +132,7 @@ public class Vk11Backend implements GpuBackend {
 						firstDevice = currentDevice;
 					}
 
-					if (isDeviceSuitable(currentDevice)) {
+					if (isDeviceSuitable(instance, currentDevice)) {
 						if (selectedDevice == null) {
 							selectedDevice = currentDevice;
 						} else if (isDeviceDiscrete(currentDevice) && !isDeviceDiscrete(selectedDevice)) {
@@ -151,9 +156,9 @@ public class Vk11Backend implements GpuBackend {
 		return new Vk11PhysicalDevice(selectedDevice, instance.propertiesMode);
 	}
 
-	private static boolean isDeviceSuitable(final VkPhysicalDevice vkPhysicalDevice) throws BackendCreationException {
+	private static boolean isDeviceSuitable(final Vk11Instance instance, final VkPhysicalDevice vkPhysicalDevice) throws BackendCreationException {
 		try (
-			Vk11PhysicalDevice physicalDevice = new Vk11PhysicalDevice(vkPhysicalDevice, Vk11PhysicalDevice.PROPERTIES_VK11);
+                Vk11PhysicalDevice physicalDevice = new Vk11PhysicalDevice(vkPhysicalDevice, instance.propertiesMode);
 		) {
 			String deviceName = physicalDevice.properties().deviceName();
             Set<String> missingExtensions = physicalDevice.getMissingExtensions(REQUIRED_DEVICE_EXTENSIONS);

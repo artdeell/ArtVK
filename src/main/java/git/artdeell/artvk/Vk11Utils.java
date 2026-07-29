@@ -4,6 +4,9 @@ import com.mojang.blaze3d.systems.BackendCreationException;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;
+import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VK11;
+import org.lwjgl.vulkan.VK12;
 import org.lwjgl.vulkan.VkClearColorValue;
 
 import java.util.Collection;
@@ -55,6 +58,12 @@ public class Vk11Utils {
 			default -> "0x" + Integer.toHexString(error);
 		};
 	}
+
+    public static int normalizeApiVersion(int apiVersion) {
+        if(apiVersion >= VK12.VK_API_VERSION_1_2) return VK12.VK_API_VERSION_1_2;
+        if(apiVersion >= VK11.VK_API_VERSION_1_1) return VK11.VK_API_VERSION_1_1;
+        return VK10.VK_API_VERSION_1_0;
+    }
 
     public static void parentClose(Collection<Dependent> dependents) {
         for(Dependent dependent : dependents) dependent.parentClosed();

@@ -28,18 +28,21 @@ public class Vk11Instance implements AutoCloseable {
 	private static final int ENGINE_VERSION = 0;
     private final VkInstance vkInstance;
 	private final Vk11Debug debug;
+    public final int apiTarget;
     public final byte propertiesMode;
 
 	protected Vk11Instance(final int debugVerbosity, boolean wantsDebugLabels, final boolean validation) throws BackendCreationException {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
             boolean vk10 = isVk10Impl();
+            if(vk10) apiTarget = VK10.VK_API_VERSION_1_0;
+            else apiTarget = getApiTarget(stack);
 			VkApplicationInfo appInfo = VkApplicationInfo.calloc(stack)
 				.sType$Default()
 				.pApplicationName(stack.UTF8(APPLICATION_NAME))
 				.applicationVersion(APPLICATION_VERSION)
 				.pEngineName(stack.UTF8(ENGINE_NAME))
 				.engineVersion(ENGINE_VERSION)
-				.apiVersion(vk10 ? VK10.VK_API_VERSION_1_0 : VK12.VK_API_VERSION_1_2);
+				.apiVersion(apiTarget);
 			List<String> validationLayers = this.getSupportedValidationLayers();
 			PointerBuffer requiredLayers = null;
 			if (validation) {
@@ -119,6 +122,12 @@ public class Vk11Instance implements AutoCloseable {
 			this.debug.setup(this.vkInstance);
 		}
 	}
+
+    private int getApiTarget(MemoryStack stack) throws BackendCreationException {
+        IntBuffer version = stack.callocInt(1);
+        Vk11Utils.throwIfFailure(VK11.vkEnumerateInstanceVersion(version), "Failed to get instance API version", BackendCreationException.Reason.VULKAN_INSTANCE_CREATION_FAILED);
+        return Vk11Utils.normalizeApiVersion(version.get(0));
+    }
 
     private boolean isVk10Impl() {
         long addr = VK10.vkGetInstanceProcAddr(null, "vkEnumerateInstanceVersion");

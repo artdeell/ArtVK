@@ -25,12 +25,10 @@ import it.unimi.dsi.fastutil.ints.IntIntPair;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalDouble;
-import java.util.Set;
 import java.util.function.Supplier;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -49,7 +47,7 @@ public class Vk11Device implements GpuDeviceBackend {
 	private final VkDevice vkDevice;
     private final IntVMA vmaObj;
 	private final long vma;
-	private final Vk11GlslCompiler glslCompiler = new Vk11GlslCompiler();
+	private final Vk11GlslCompiler glslCompiler;
 	private final DeviceInfo deviceInfo;
 	private final Vk11Queue graphicsQueue;
 	private final Vk11Queue computeQueue;
@@ -71,10 +69,11 @@ public class Vk11Device implements GpuDeviceBackend {
 		this.instance = instance;
 		this.vkDevice = vkDevice;
 		this.vmaObj = vma;
+        // The GLSL compiler doesn't call Vulkan APIs so we only care about the device version
+        this.glslCompiler = new Vk11GlslCompiler(physicalDevice.normalizedApiVersion());
         this.vma = vmaObj.ptr;
-		Set<String> extensionNames = new HashSet<>();
 
-		Vk11PhysicalDevice.Properties properties = physicalDevice.properties();
+        Vk11PhysicalDevice.Properties properties = physicalDevice.properties();
         features = physicalDevice.features();
 
         if(!features.fillModeNonSolid()) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
@@ -84,7 +83,7 @@ public class Vk11Device implements GpuDeviceBackend {
 			physicalDevice.vendorName(),
 			properties.driverInfo(),
 			true,
-			"ArtVK",
+			Vk11Backend.NAME,
 			properties.timestampPeriod(),
 			new DeviceLimits(
 				features.samplerAnisotropy() ? properties.maxSamplerAnisotropy() : 1,
@@ -95,7 +94,7 @@ public class Vk11Device implements GpuDeviceBackend {
 				properties.maxColorAttachments()
 			),
 			new DeviceFeatures(true, features.multiDraw(), false, features.multiDrawIndirect(), true, true, true),
-			Collections.unmodifiableSet(extensionNames),
+			Collections.emptySet(), // TODO: maybe implement this?
 			new HintsAndWorkarounds(false, false),
 			physicalDevice.deviceType()
 		);
