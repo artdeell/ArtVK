@@ -233,7 +233,7 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 			frameIndexPtr.put(0, NO_CURRENT_IMAGE);
             currentAcquireSemaphore = (currentAcquireSemaphore + 1) % acquireSemaphores.length;
 			long acquireSemaphore = acquireSemaphores[currentAcquireSemaphore];
-			int result = KHRSwapchain.vkAcquireNextImageKHR(this.device.vkDevice(), this.swapchain, 50000000000L, acquireSemaphore, 0L, frameIndexPtr);
+			int result = KHRSwapchain.vkAcquireNextImageKHR(this.device.vkDevice(), this.swapchain, -1L, acquireSemaphore, 0L, frameIndexPtr);
 			if (result == VK10.VK_TIMEOUT) {
 				throw new IllegalStateException("GPU timeout attempting to acquire next frame");
 			}
