@@ -29,7 +29,6 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 
 	private final VkPhysicalDeviceFeatures2 vkPhysicalDeviceFeatures;
 	private final VkPhysicalDeviceProperties2 vkPhysicalDeviceProperties;
-	private final VkPhysicalDeviceVulkan11Properties vkPhysicalDeviceVulkan11Properties;
 	private final VkPhysicalDeviceDriverProperties vkPhysicalDeviceDriverProperties;
 
 
@@ -56,9 +55,7 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 
 
 			this.vkPhysicalDeviceProperties = VkPhysicalDeviceProperties2.calloc().sType$Default();
-			this.vkPhysicalDeviceVulkan11Properties = VkPhysicalDeviceVulkan11Properties.calloc().sType$Default();
 			this.vkPhysicalDeviceDriverProperties = VkPhysicalDeviceDriverProperties.calloc().sType$Default();
-            this.vkPhysicalDeviceProperties.pNext(this.vkPhysicalDeviceVulkan11Properties);
 			this.vkPhysicalDeviceProperties.pNext(this.vkPhysicalDeviceDriverProperties);
 
 
@@ -120,7 +117,6 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 	public void close() {
 		this.vkPhysicalDeviceFeatures.free();
 		this.vkDeviceExtensions.free();
-		this.vkPhysicalDeviceVulkan11Properties.free();
 		this.vkPhysicalDeviceDriverProperties.free();
 		this.vkPhysicalDeviceProperties.free();
 	}
@@ -156,9 +152,8 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 	public VkPhysicalDeviceProperties vkPhysicalDeviceProperties() {
 		return this.vkPhysicalDeviceProperties.properties();
 	}
-
-	public VkPhysicalDeviceVulkan11Properties vkPhysicalDeviceVulkan11Properties() {
-		return this.vkPhysicalDeviceVulkan11Properties;
+	public VkPhysicalDeviceProperties2 vkPhysicalDeviceProperties2(){
+		return this.vkPhysicalDeviceProperties;
 	}
 
 	public VkPhysicalDeviceDriverProperties vkPhysicalDeviceDriverProperties() {

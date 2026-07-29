@@ -66,6 +66,7 @@ public class Vk11Device implements GpuDeviceBackend {
 		final Vk11PhysicalDevice physicalDevice,
 		final Set<String> enabledDeviceExtensions,
 		final VkDevice vkDevice,
+		final Vk11ExtensionProperties vk11ExtensionProperties,
 		final IntVMA vma
 	) {
 		this.defaultShaderSource = defaultShaderSource;
@@ -84,12 +85,11 @@ public class Vk11Device implements GpuDeviceBackend {
 		}
 
 		VkPhysicalDeviceLimits limits = physicalDevice.vkPhysicalDeviceProperties().limits();
-		VkPhysicalDeviceVulkan11Properties vk11Properties = physicalDevice.vkPhysicalDeviceVulkan11Properties();
         VkPhysicalDeviceFeatures features = physicalDevice.vkPhysicalDeviceFeatures().features();
 
         hasFillModeNonSolid = features.fillModeNonSolid();
         hasAnisotropy = features.samplerAnisotropy();
-        hasAttributeDivisor = enabledDeviceExtensions.contains("VK_EXT_vertex_attribute_divisor");
+        hasAttributeDivisor = vk11ExtensionProperties.vertexAttributeDivisor();
 
         if(!hasFillModeNonSolid) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
 
@@ -104,11 +104,11 @@ public class Vk11Device implements GpuDeviceBackend {
 				hasAnisotropy ? (int)limits.maxSamplerAnisotropy() : 1,
 				(int)limits.minUniformBufferOffsetAlignment(),
 				limits.maxImageDimension2D(),
-				vk11Properties.maxMemoryAllocationSize() <= 0L ? Long.MAX_VALUE : vk11Properties.maxMemoryAllocationSize(),
+				vk11ExtensionProperties.maxMemoryAllocationSize() <= 0L ? Long.MAX_VALUE : vk11ExtensionProperties.maxMemoryAllocationSize(),
 				Integer.MAX_VALUE,
 				limits.maxColorAttachments()
 			),
-			new DeviceFeatures(true, enabledDeviceExtensions.contains("VK_EXT_multi_draw"), false, features.multiDrawIndirect(), true, true, true),
+			new DeviceFeatures(true, vk11ExtensionProperties.multiDraw(), false, features.multiDrawIndirect(), true, true, true),
 			Collections.unmodifiableSet(extensionNames),
 			new HintsAndWorkarounds(false, false),
 			physicalDevice.deviceType()

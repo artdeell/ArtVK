@@ -25,9 +25,6 @@ import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWVulkan;
 import org.lwjgl.system.MemoryStack;
-import org.lwjgl.util.vma.Vma;
-import org.lwjgl.util.vma.VmaAllocatorCreateInfo;
-import org.lwjgl.util.vma.VmaVulkanFunctions;
 import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo.Buffer;
 
@@ -85,6 +82,7 @@ public class Vk11Backend implements GpuBackend {
 		Vk11PhysicalDevice physicalDevice = null;
 		VkDevice device = null;
 		IntVMA vma = null;
+		Vk11ExtensionProperties extensionProperties = null;
 
 		try {
 			boolean renderdocAttached = "1".equals(System.getenv("ENABLE_VULKAN_RENDERDOC_CAPTURE"));
@@ -93,15 +91,17 @@ public class Vk11Backend implements GpuBackend {
 			instance = new Vk11Instance(debugOptions.logLevel(), useDebugLabels, validation);
 			physicalDevice = findPhysicalDevice(instance);
 			enableDeviceExtensions(deviceExtensions, physicalDevice,
-					"VK_KHR_portability_subset",
+					"VK_KHR_portability_subset", // MoltenVK
 					"VK_EXT_multi_draw",
 					"VK_EXT_vertex_attribute_divisor",
-					"VK_KHR_shader_draw_parameters"
+					"VK_KHR_shader_draw_parameters",
+					"VK_KHR_maintenance3"
 					);
             if(useDebugLabels) {
 				enableDeviceExtensions(deviceExtensions, physicalDevice, "VK_AMD_buffer_marker", "VK_NV_device_diagnostic_checkpoints");
             }
-			device = createVkDevice(deviceExtensions, physicalDevice);
+			extensionProperties = new Vk11ExtensionProperties();
+			device = createVkDevice(deviceExtensions, physicalDevice, extensionProperties);
 			vma = new IntVMA(device);
 		} catch (BackendCreationException e) {
 			if(vma != null) vma.close();
@@ -112,7 +112,7 @@ public class Vk11Backend implements GpuBackend {
 		}
 
 		return new GpuDevice(
-			new Vk11Device(defaultShaderSource, instance, physicalDevice, deviceExtensions, device, vma), criticalShaderLoader
+			new Vk11Device(defaultShaderSource, instance, physicalDevice, deviceExtensions, device, extensionProperties, vma), criticalShaderLoader
 		);
 	}
 
@@ -262,33 +262,48 @@ public class Vk11Backend implements GpuBackend {
 		throw new BackendCreationException("Device missing capabilities", mostProminentReason, missingCapabilities);
 	}
 
-	private static void enableExtensionFeatures(Vk11PhysicalDevice device, MemoryStack stack, VkPhysicalDeviceFeatures2 features, Collection<String> deviceExtensions){
-		if(deviceExtensions.contains("VK_EXT_vertex_attribute_divisor")){
-			VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vaf = VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT.calloc(stack).sType$Default();
-			features.pNext(vaf);
-		}
+	private static void queryExtensionFeatures(Vk11PhysicalDevice device,
+											   MemoryStack stack,
+											   VkPhysicalDeviceFeatures2 features,
+											   Vk11ExtensionProperties vk11ExtensionProperties,
+											   Collection<String> deviceExtensions)
+	{
+		VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vaf = VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT.calloc(stack).sType$Default();
+		VkPhysicalDeviceShaderDrawParametersFeatures sdp = VkPhysicalDeviceShaderDrawParametersFeatures.calloc(stack).sType$Default();
+		if(deviceExtensions.contains("VK_EXT_vertex_attribute_divisor")) features.pNext(vaf);
 		// This was promoted to core only in 1.1, but we are planning on targeting 1.0
 		// Though not all 1.0 devices have this extension, so we need to think about it a bit more...
-		if(deviceExtensions.contains("VK_KHR_shader_draw_parameters") || device.vkPhysicalDeviceProperties().apiVersion() == VK11.VK_API_VERSION_1_1){
-			VkPhysicalDeviceShaderDrawParametersFeatures sdp = VkPhysicalDeviceShaderDrawParametersFeatures.calloc(stack).sType$Default();
-			features.pNext(sdp);
-		}
-		KHRGetPhysicalDeviceProperties2.vkGetPhysicalDeviceFeatures2KHR(device.vkPhysicalDevice(), features);
+		if(deviceExtensions.contains("VK_KHR_shader_draw_parameters") || device.vkPhysicalDeviceProperties().apiVersion() == VK11.VK_API_VERSION_1_1) features.pNext(sdp);
+		VK11.vkGetPhysicalDeviceFeatures2(device.vkPhysicalDevice(), features);
+		vk11ExtensionProperties.setVertexAttributeDivisor(vaf.vertexAttributeInstanceRateDivisor());
+		vk11ExtensionProperties.setShaderDrawParameters(sdp.shaderDrawParameters());
+
+	}
+	private static void queryExtensionProperties(Vk11PhysicalDevice device,
+											  MemoryStack stack,
+											  VkPhysicalDeviceProperties2 properties,
+											  Vk11ExtensionProperties vk11ExtensionProperties,
+											  Collection<String> deviceExtensions) {
+		VkPhysicalDeviceMaintenance3Properties maint3 = VkPhysicalDeviceMaintenance3Properties.calloc(stack).sType$Default();
+		if (deviceExtensions.contains("VK_KHR_maintenance3") || device.vkPhysicalDeviceProperties().apiVersion() >= VK11.VK_API_VERSION_1_1) properties.pNext(maint3);
+		VK11.vkGetPhysicalDeviceProperties2(device.vkPhysicalDevice(), properties);
+		ArtVK.LOGGER.info("Max memory allocation size: {}", maint3.maxMemoryAllocationSize());
+		vk11ExtensionProperties.setMaxMemoryAllocationSize(maint3.maxMemoryAllocationSize() > 0L ? maint3.maxMemoryAllocationSize() : Long.MAX_VALUE);
 	}
 
 	private static VkDevice createVkDevice(
-		final Collection<String> deviceExtensions, final Vk11PhysicalDevice physicalDevice
+		final Collection<String> deviceExtensions, final Vk11PhysicalDevice physicalDevice, final Vk11ExtensionProperties extensionProperties
 	) throws BackendCreationException {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
             VkPhysicalDeviceFeatures2 availableFeatures = physicalDevice.vkPhysicalDeviceFeatures();
-
 			VkPhysicalDeviceFeatures2 deviceFeatures = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default();
 			// Enable required VK10 features
 			deviceFeatures.features().multiDrawIndirect(availableFeatures.features().multiDrawIndirect());
 			deviceFeatures.features().fillModeNonSolid(availableFeatures.features().fillModeNonSolid());
 			deviceFeatures.features().samplerAnisotropy(availableFeatures.features().samplerAnisotropy());
 
-			enableExtensionFeatures(physicalDevice, stack, deviceFeatures, deviceExtensions);
+			queryExtensionProperties(physicalDevice, stack, physicalDevice.vkPhysicalDeviceProperties2(), extensionProperties, deviceExtensions);
+			queryExtensionFeatures(physicalDevice, stack, deviceFeatures, extensionProperties, deviceExtensions);
 
 			Int2IntMap queuesToCreate = physicalDevice.queueFamilyCreateInfoMap();
 			Buffer queueCreationInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
