@@ -95,7 +95,8 @@ public class Vk11Backend implements GpuBackend {
 			enableDeviceExtensions(deviceExtensions, physicalDevice,
 					"VK_KHR_portability_subset",
 					"VK_EXT_multi_draw",
-					"VK_EXT_vertex_attribute_divisor"
+					"VK_EXT_vertex_attribute_divisor",
+					"VK_KHR_shader_draw_parameters"
 					);
             if(useDebugLabels) {
 				enableDeviceExtensions(deviceExtensions, physicalDevice, "VK_AMD_buffer_marker", "VK_NV_device_diagnostic_checkpoints");
@@ -261,18 +262,18 @@ public class Vk11Backend implements GpuBackend {
 		throw new BackendCreationException("Device missing capabilities", mostProminentReason, missingCapabilities);
 	}
 
-	private static void enableExtensionFeatures(VkPhysicalDevice device, MemoryStack stack, VkPhysicalDeviceFeatures2 features, Collection<String> deviceExtensions){
+	private static void enableExtensionFeatures(Vk11PhysicalDevice device, MemoryStack stack, VkPhysicalDeviceFeatures2 features, Collection<String> deviceExtensions){
 		if(deviceExtensions.contains("VK_EXT_vertex_attribute_divisor")){
 			VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vaf = VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT.calloc(stack).sType$Default();
 			features.pNext(vaf);
 		}
 		// This was promoted to core only in 1.1, but we are planning on targeting 1.0
 		// Though not all 1.0 devices have this extension, so we need to think about it a bit more...
-		if(deviceExtensions.contains("VK_KHR_shader_draw_parameters")){
+		if(deviceExtensions.contains("VK_KHR_shader_draw_parameters") || device.vkPhysicalDeviceProperties().apiVersion() == VK11.VK_API_VERSION_1_1){
 			VkPhysicalDeviceShaderDrawParametersFeatures sdp = VkPhysicalDeviceShaderDrawParametersFeatures.calloc(stack).sType$Default();
 			features.pNext(sdp);
 		}
-		KHRGetPhysicalDeviceProperties2.vkGetPhysicalDeviceFeatures2KHR(device, features);
+		KHRGetPhysicalDeviceProperties2.vkGetPhysicalDeviceFeatures2KHR(device.vkPhysicalDevice(), features);
 	}
 
 	private static VkDevice createVkDevice(
@@ -287,7 +288,7 @@ public class Vk11Backend implements GpuBackend {
 			deviceFeatures.features().fillModeNonSolid(availableFeatures.features().fillModeNonSolid());
 			deviceFeatures.features().samplerAnisotropy(availableFeatures.features().samplerAnisotropy());
 
-			enableExtensionFeatures(physicalDevice.vkPhysicalDevice(), stack, deviceFeatures, deviceExtensions);
+			enableExtensionFeatures(physicalDevice, stack, deviceFeatures, deviceExtensions);
 
 			Int2IntMap queuesToCreate = physicalDevice.queueFamilyCreateInfoMap();
 			Buffer queueCreationInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
