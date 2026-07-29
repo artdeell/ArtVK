@@ -93,7 +93,7 @@ public class Vk11Device implements GpuDeviceBackend {
 				Integer.MAX_VALUE,
 				properties.maxColorAttachments()
 			),
-			new DeviceFeatures(true, features.multiDraw(), false, features.multiDrawIndirect(), true, true, true),
+			new DeviceFeatures(true, features.multiDraw(), false, true, true, true, true),
 			Collections.emptySet(), // TODO: maybe implement this?
 			new HintsAndWorkarounds(false, false),
 			physicalDevice.deviceType()

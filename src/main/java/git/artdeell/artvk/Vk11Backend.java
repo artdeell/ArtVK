@@ -201,11 +201,6 @@ public class Vk11Backend implements GpuBackend {
 	private static VkDevice createVkDevice(final Vk11PhysicalDevice physicalDevice) throws BackendCreationException {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 
-			// Enable MultiDrawEXT if present
-			VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeatures = VkPhysicalDeviceMultiDrawFeaturesEXT.calloc(stack).sType$Default();
-			multiDrawFeatures.multiDraw(true);
-			vk11Features.pNext(multiDrawFeatures.address());
-
 			Int2IntMap queuesToCreate = physicalDevice.queueFamilyCreateInfoMap();
 			Buffer queueCreationInfo = VkDeviceQueueCreateInfo.calloc(queuesToCreate.size(), stack);
 
