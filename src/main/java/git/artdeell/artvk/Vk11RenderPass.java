@@ -231,7 +231,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 		if (pipeline != null && pipeline.isValid()) {
             pushDescriptors();
 			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
-			if(device.realFeatures().multiDrawIndirect())
+			if(device.features.multiDrawIndirect())
 				VK10.vkCmdDrawIndexedIndirect(
 					commandBuffer(), buf, commands.offset(), drawCount, VkDrawIndexedIndirectCommand.SIZEOF
 				);
@@ -300,7 +300,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 		if (pipeline != null && pipeline.isValid()) {
 			pushDescriptors();
 			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
-			if(device.realFeatures().multiDrawIndirect())
+			if(device.features.multiDrawIndirect())
 				VK10.vkCmdDrawIndirect(commandBuffer(), buf, commands.offset(), drawCount, VkDrawIndirectCommand.SIZEOF);
 			else {
 				long offset = commands.offset();
