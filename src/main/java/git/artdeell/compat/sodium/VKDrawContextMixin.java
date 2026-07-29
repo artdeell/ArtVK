@@ -43,7 +43,7 @@ public class VKDrawContextMixin {
 
     @Inject(method = "updateData", at = @At(value = "INVOKE", target = "Lorg/lwjgl/vulkan/VK13;nvkCmdPushConstants(Lorg/lwjgl/vulkan/VkCommandBuffer;JIIIJ)V"), cancellable = true)
     public void injectPushConstant(RenderRegion region, CameraTransform camera, CallbackInfo ci, @Local(name = "memory") long memory, @Local(name = "stack") MemoryStack stack){
-        VK11.nvkCmdPushConstants(this.cmdBuf, this.layout, VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, DrawContext.PUSH_CONSTANT_RANGE, memory);
+        VK10.nvkCmdPushConstants(this.cmdBuf, this.layout, VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, DrawContext.PUSH_CONSTANT_RANGE, memory);
         stack.close();
         ci.cancel();
     }
