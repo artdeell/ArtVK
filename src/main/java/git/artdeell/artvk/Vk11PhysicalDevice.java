@@ -2,35 +2,36 @@ package git.artdeell.artvk;
 
 import com.mojang.blaze3d.systems.BackendCreationException;
 import com.mojang.blaze3d.systems.DeviceType;
+import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMaps;
 import it.unimi.dsi.fastutil.ints.IntIntImmutablePair;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
+
 import java.nio.IntBuffer;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
+
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFWVulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkExtensionProperties.Buffer;
 
-import javax.swing.*;
-
 @Environment(EnvType.CLIENT)
 public class Vk11PhysicalDevice implements AutoCloseable {
+    public static final byte PROPERTIES_VK10 = 0;
+    public static final byte PROPERTIES_VK11 = 1;
+    public static final byte PROPERTIES_KHR = 2;
+
 	private final VkPhysicalDevice vkPhysicalDevice;
 	private final Buffer vkDeviceExtensions;
 
-	private final VkPhysicalDeviceFeatures2 vkPhysicalDeviceFeatures;
-	private final VkPhysicalDeviceProperties2 vkPhysicalDeviceProperties;
-	private final VkPhysicalDeviceVulkan11Properties vkPhysicalDeviceVulkan11Properties;
-	private final VkPhysicalDeviceDriverProperties vkPhysicalDeviceDriverProperties;
+    private final Properties properties;
+	private final Features features;
 
 
 	private final Int2IntMap queueFamilyCreateInfoMap;
@@ -38,7 +39,7 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 	private final @Nullable IntIntPair computeQueueFamilyAndIndex;
 	private final @Nullable IntIntPair transferQueueFamilyAndIndex;
 
-	public Vk11PhysicalDevice(final VkPhysicalDevice vkPhysicalDevice) throws BackendCreationException {
+	public Vk11PhysicalDevice(final VkPhysicalDevice vkPhysicalDevice, byte propertiesMode) throws BackendCreationException {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			this.vkPhysicalDevice = vkPhysicalDevice;
 			IntBuffer intBuffer = stack.callocInt(1);
@@ -54,21 +55,23 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 				BackendCreationException.Reason.VULKAN_NO_DEVICE
 			);
 
+            VkPhysicalDeviceProperties physicalDeviceProperties = VkPhysicalDeviceProperties.calloc(stack);
+            VK10.vkGetPhysicalDeviceProperties(vkPhysicalDevice, physicalDeviceProperties);
 
-			this.vkPhysicalDeviceProperties = VkPhysicalDeviceProperties2.calloc().sType$Default();
-			this.vkPhysicalDeviceVulkan11Properties = VkPhysicalDeviceVulkan11Properties.calloc().sType$Default();
-			this.vkPhysicalDeviceDriverProperties = VkPhysicalDeviceDriverProperties.calloc().sType$Default();
-            this.vkPhysicalDeviceProperties.pNext(this.vkPhysicalDeviceVulkan11Properties);
-			this.vkPhysicalDeviceProperties.pNext(this.vkPhysicalDeviceDriverProperties);
+            properties = Properties.detectProperties(
+                    this,
+                    propertiesMode
+            );
 
-
-			VK11.vkGetPhysicalDeviceProperties2(vkPhysicalDevice, this.vkPhysicalDeviceProperties);
+            features = Features.detectFeatures(
+                    this,
+                    physicalDeviceProperties.apiVersion(),
+                    propertiesMode
+            );
 
 			VK10.vkGetPhysicalDeviceQueueFamilyProperties(vkPhysicalDevice, intBuffer, null);
 			org.lwjgl.vulkan.VkQueueFamilyProperties.Buffer vkQueueFamilyProps = VkQueueFamilyProperties.calloc(intBuffer.get(0), stack);
 			VK10.vkGetPhysicalDeviceQueueFamilyProperties(vkPhysicalDevice, intBuffer, vkQueueFamilyProps);
-			this.vkPhysicalDeviceFeatures = VkPhysicalDeviceFeatures2.calloc().sType$Default();
-			VK11.vkGetPhysicalDeviceFeatures2(vkPhysicalDevice, this.vkPhysicalDeviceFeatures);
 			int graphicsQueueFamily = -1;
 			int computeQueueFamily = -1;
 			int transferQueueFamily = -1;
@@ -118,19 +121,12 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 
 	@Override
 	public void close() {
-		this.vkPhysicalDeviceFeatures.free();
 		this.vkDeviceExtensions.free();
-		this.vkPhysicalDeviceVulkan11Properties.free();
-		this.vkPhysicalDeviceDriverProperties.free();
-		this.vkPhysicalDeviceProperties.free();
 	}
 
-	public String deviceName() {
-		return this.vkPhysicalDeviceProperties.properties().deviceNameString();
-	}
 
 	public String vendorName() {
-		int vendorId = this.vkPhysicalDeviceProperties.properties().vendorID();
+		int vendorId = properties().vendorId;
 
 		return switch (vendorId) {
 			case 0x1002, 0x1022 -> "AMD";
@@ -153,20 +149,12 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 		return this.vkPhysicalDevice;
 	}
 
-	public VkPhysicalDeviceProperties vkPhysicalDeviceProperties() {
-		return this.vkPhysicalDeviceProperties.properties();
-	}
+    public Features features() {
+        return features;
+    }
 
-	public VkPhysicalDeviceVulkan11Properties vkPhysicalDeviceVulkan11Properties() {
-		return this.vkPhysicalDeviceVulkan11Properties;
-	}
-
-	public VkPhysicalDeviceDriverProperties vkPhysicalDeviceDriverProperties() {
-		return this.vkPhysicalDeviceDriverProperties;
-	}
-
-    public VkPhysicalDeviceFeatures2 vkPhysicalDeviceFeatures() {
-        return this.vkPhysicalDeviceFeatures;
+    public Properties properties() {
+        return properties;
     }
 
 	public boolean hasDeviceExtension(final String name) {
@@ -206,16 +194,16 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 		return String.format(Locale.ROOT, "%d.%d.%d", major, minor, patch);
 	}
 
-	public String driverInfo() {
-		int apiVersion = this.vkPhysicalDeviceProperties.properties().apiVersion();
+	private static String getDriverInfo(int apiVersion, VkPhysicalDeviceDriverProperties driverProperties) {
 		String versionString = getStandardEncodingVersion(apiVersion);
-		return String.format(
-			Locale.ROOT, "%s %s %s", versionString, this.vkPhysicalDeviceDriverProperties.driverNameString(), this.vkPhysicalDeviceDriverProperties.driverInfoString()
+        if(driverProperties == null) return String.format(Locale.ROOT, "%s (no extended info)", versionString);
+        else return String.format(
+			Locale.ROOT, "%s %s %s", versionString, driverProperties.driverNameString(), driverProperties.driverInfoString()
 		);
 	}
 
 	public DeviceType deviceType() {
-		return switch (this.vkPhysicalDeviceProperties.properties().deviceType()) {
+		return switch (properties.deviceType) {
 			case VK10.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> DeviceType.INTEGRATED;
 			case VK10.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> DeviceType.DISCRETE;
 			case VK10.VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> DeviceType.VIRTUAL;
@@ -223,4 +211,228 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 			default -> DeviceType.OTHER;
 		};
 	}
+
+    public record Features(
+            boolean multiDrawIndirect,
+            boolean fillModeNonSolid,
+            boolean samplerAnisotropy,
+            boolean shaderDrawParameters,
+            boolean vertexAttributeDivisor,
+            boolean multiDraw
+    ) {
+
+        private static Features detectBasicFeatures(Vk11PhysicalDevice device) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkPhysicalDeviceFeatures features = VkPhysicalDeviceFeatures.calloc(stack);
+                VK10.vkGetPhysicalDeviceFeatures(device.vkPhysicalDevice(), features);
+                return new Features(
+                        features.multiDrawIndirect(),
+                        features.fillModeNonSolid(),
+                        features.samplerAnisotropy(),
+                        device.hasDeviceExtension(KHRShaderDrawParameters.VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME),
+                        false,
+                        false
+                );
+            }
+
+        }
+        public static Features detectFeatures(
+                Vk11PhysicalDevice device,
+                int deviceApiVersion,
+                byte queryMode
+        ) {
+            if (queryMode == PROPERTIES_VK10) {
+                return detectBasicFeatures(device);
+            }
+
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkPhysicalDeviceFeatures2 features = VkPhysicalDeviceFeatures2.calloc(stack).sType$Default();
+                VkPhysicalDeviceVertexAttributeDivisorFeatures divisorFeatures = null;
+                VkPhysicalDeviceShaderDrawParametersFeatures drawParametersFeatures = null;
+                VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeatures = null;
+
+                boolean shaderDrawParameters =
+                        device.hasDeviceExtension(KHRShaderDrawParameters.VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME) || deviceApiVersion >= VK11.VK_API_VERSION_1_1;
+                boolean vertexAttribDivisor =
+                        device.hasDeviceExtension(KHRVertexAttributeDivisor.VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME) || deviceApiVersion >= VK14.VK_API_VERSION_1_4;
+                boolean multiDraw = device.hasDeviceExtension(EXTMultiDraw.VK_EXT_MULTI_DRAW_EXTENSION_NAME);
+
+                if (shaderDrawParameters) {
+                    drawParametersFeatures = VkPhysicalDeviceShaderDrawParametersFeatures.calloc(stack).sType$Default();
+                    features.pNext(drawParametersFeatures);
+                }
+
+                if (vertexAttribDivisor) {
+                    divisorFeatures = VkPhysicalDeviceVertexAttributeDivisorFeatures.calloc(stack).sType$Default();
+                    features.pNext(divisorFeatures);
+                }
+
+                if (multiDraw) {
+                    multiDrawFeatures = VkPhysicalDeviceMultiDrawFeaturesEXT.calloc(stack).sType$Default();
+                    features.pNext(multiDrawFeatures);
+                }
+
+                switch (queryMode) {
+                    case PROPERTIES_VK11 -> VK11.vkGetPhysicalDeviceFeatures2(device.vkPhysicalDevice(), features);
+                    case PROPERTIES_KHR -> KHRGetPhysicalDeviceProperties2.vkGetPhysicalDeviceFeatures2KHR(device.vkPhysicalDevice(), features);
+                }
+
+                return new Features(
+                        features.features().multiDrawIndirect(),
+                        features.features().fillModeNonSolid(),
+                        features.features().samplerAnisotropy(),
+                        shaderDrawParameters && drawParametersFeatures.shaderDrawParameters(),
+                        vertexAttribDivisor && divisorFeatures.vertexAttributeInstanceRateDivisor(),
+                        multiDraw && multiDrawFeatures.multiDraw()
+                );
+            }
+        }
+
+        public void addFeaturesAndExtensions(
+                MemoryStack memoryStack,
+                Vk11PhysicalDevice device,
+                VkDeviceCreateInfo createInfo
+        ) {
+            VkPhysicalDeviceFeatures basicFeatures = VkPhysicalDeviceFeatures.calloc(memoryStack);
+            basicFeatures.fillModeNonSolid(fillModeNonSolid);
+            basicFeatures.multiDrawIndirect(multiDrawIndirect);
+            basicFeatures.samplerAnisotropy(samplerAnisotropy);
+
+            createInfo.pEnabledFeatures(basicFeatures);
+
+            Set<String> enabledExts = new HashSet<>(3);
+
+            if (shaderDrawParameters) {
+                VkPhysicalDeviceShaderDrawParametersFeatures drawParametersFeatures =
+                        VkPhysicalDeviceShaderDrawParametersFeatures.calloc(memoryStack).sType$Default();
+                drawParametersFeatures.shaderDrawParameters(true);
+                createInfo.pNext(drawParametersFeatures);
+                if (device.hasDeviceExtension(KHRShaderDrawParameters.VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME))
+                    enabledExts.add(KHRShaderDrawParameters.VK_KHR_SHADER_DRAW_PARAMETERS_EXTENSION_NAME);
+            }
+
+            if (vertexAttributeDivisor) {
+                VkPhysicalDeviceVertexAttributeDivisorFeatures attributeDivisorFeatures =
+                        VkPhysicalDeviceVertexAttributeDivisorFeatures.calloc(memoryStack).sType$Default();
+                attributeDivisorFeatures.vertexAttributeInstanceRateDivisor(true);
+                createInfo.pNext(attributeDivisorFeatures);
+                if (device.hasDeviceExtension(EXTVertexAttributeDivisor.VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME))
+                    enabledExts.add(EXTVertexAttributeDivisor.VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
+                else if (device.hasDeviceExtension(KHRVertexAttributeDivisor.VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME))
+                    enabledExts.add(KHRVertexAttributeDivisor.VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
+            }
+
+            if (multiDraw) {
+                VkPhysicalDeviceMultiDrawFeaturesEXT multiDrawFeatures =
+                        VkPhysicalDeviceMultiDrawFeaturesEXT.calloc(memoryStack).sType$Default();
+                multiDrawFeatures.multiDraw(true);
+                createInfo.pNext(multiDrawFeatures);
+                enabledExts.add(EXTMultiDraw.VK_EXT_MULTI_DRAW_EXTENSION_NAME);
+            }
+
+            if(device.hasDeviceExtension(KHRMaintenance3.VK_KHR_MAINTENANCE3_EXTENSION_NAME)) {
+                enabledExts.add(KHRMaintenance3.VK_KHR_MAINTENANCE3_EXTENSION_NAME);
+            }
+
+            if (device.hasDeviceExtension(KHRPortabilitySubset.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
+                enabledExts.add(KHRPortabilitySubset.VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+            }
+
+            enabledExts.addAll(Vk11Backend.REQUIRED_DEVICE_EXTENSIONS);
+
+            PointerBuffer extensionsBuffer = memoryStack.callocPointer(enabledExts.size());
+            StringBuilder logExtensions = new StringBuilder()
+                    .append("Enabled device extensions:");
+            for (String s : enabledExts) {
+                extensionsBuffer.put(memoryStack.UTF8(s));
+                logExtensions.append(' ').append(s);
+            }
+            ArtVK.LOGGER.info(logExtensions.toString());
+            extensionsBuffer.flip();
+
+            createInfo.ppEnabledExtensionNames(extensionsBuffer);
+        }
+    }
+
+    public record Properties (
+            String deviceName,
+            String driverInfo,
+            int apiVersion,
+            int vendorId,
+            int driverId,
+            int deviceType,
+            float timestampPeriod,
+            int maxSamplerAnisotropy,
+            int minUniformBufferOffsetAlignment,
+            int maxImageDimension2D,
+            long maxMemoryAllocationSize,
+            int maxColorAttachments
+    ) {
+
+        private static Properties basicProperties(VkPhysicalDeviceProperties properties) {
+            VkPhysicalDeviceLimits limits = properties.limits();
+            return new Properties(
+                    properties.deviceNameString(),
+                    getStandardEncodingVersion(properties.driverVersion()),
+                    properties.apiVersion(),
+                    properties.vendorID(),
+                    -1,
+                    properties.deviceType(),
+                    limits.timestampPeriod(),
+                    (int) limits.maxSamplerAnisotropy(),
+                    (int) limits.minUniformBufferOffsetAlignment(),
+                    limits.maxImageDimension2D(),
+                    Long.MAX_VALUE,
+                    limits.maxColorAttachments()
+            );
+        }
+
+        private static Properties detectProperties(Vk11PhysicalDevice device, byte propertiesMode) {
+            try(MemoryStack memoryStack = MemoryStack.stackPush()) {
+                VkPhysicalDeviceProperties2 extendedProperties = VkPhysicalDeviceProperties2.calloc(memoryStack).sType$Default();
+                VkPhysicalDeviceProperties properties = extendedProperties.properties();
+                VkPhysicalDeviceLimits limits = properties.limits();
+                VkPhysicalDeviceMaintenance3Properties m3Properties = null;
+                VkPhysicalDeviceDriverProperties driverProperties = null;
+                VK10.vkGetPhysicalDeviceProperties(device.vkPhysicalDevice, properties);
+                if(propertiesMode == PROPERTIES_VK10) return basicProperties(properties);
+
+                int apiVersion = properties.apiVersion();
+
+                if(device.hasDeviceExtension(KHRMaintenance3.VK_KHR_MAINTENANCE3_EXTENSION_NAME) || apiVersion >= VK11.VK_API_VERSION_1_1) {
+                    m3Properties = VkPhysicalDeviceMaintenance3Properties.calloc(memoryStack).sType$Default();
+                    extendedProperties.pNext(m3Properties);
+                }
+                if(device.hasDeviceExtension(KHRDriverProperties.VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) || apiVersion >= VK12.VK_API_VERSION_1_2) {
+                    driverProperties = VkPhysicalDeviceDriverProperties.calloc(memoryStack).sType$Default();
+                    extendedProperties.pNext(driverProperties);
+                }
+
+                switch (propertiesMode) {
+                    case PROPERTIES_VK11 -> VK11.vkGetPhysicalDeviceProperties2(device.vkPhysicalDevice(), extendedProperties);
+                    case PROPERTIES_KHR -> KHRGetPhysicalDeviceProperties2.vkGetPhysicalDeviceProperties2KHR(device.vkPhysicalDevice(), extendedProperties);
+                }
+
+                long maxMemoryAllocationSize = Long.MAX_VALUE;
+                if(m3Properties != null && m3Properties.maxMemoryAllocationSize() > 0L) {
+                    maxMemoryAllocationSize = m3Properties.maxMemoryAllocationSize();
+                }
+
+                return new Properties(
+                        properties.deviceNameString(),
+                        getDriverInfo(apiVersion, driverProperties),
+                        properties.apiVersion(),
+                        properties.vendorID(),
+                        driverProperties != null ? driverProperties.driverID() : -1,
+                        properties.deviceType(),
+                        limits.timestampPeriod(),
+                        (int) limits.maxSamplerAnisotropy(),
+                        (int) limits.minUniformBufferOffsetAlignment(),
+                        limits.maxImageDimension2D(),
+                        maxMemoryAllocationSize,
+                        limits.maxColorAttachments()
+                );
+            }
+        }
+    }
 }

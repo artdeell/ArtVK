@@ -33,7 +33,7 @@ public class Vk11GpuSampler extends GpuSampler implements Destroyable {
 		final int maxAnisotropy,
 		final OptionalDouble maxLod
 	) {
-        boolean anisotropyEnable = maxAnisotropy > 1 && device.hasAnisotropy;
+        boolean anisotropyEnable = maxAnisotropy > 1 && device.features.samplerAnisotropy();
 
 		this.device = device;
 		this.addressModeU = addressModeU;

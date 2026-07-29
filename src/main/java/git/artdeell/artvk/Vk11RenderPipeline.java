@@ -82,7 +82,7 @@ public record Vk11RenderPipeline(
                 vertexBindingDescriptions.put(bindingDescription);
 
                 if (bindings.getStepRate() > 0) {
-                    if(device.hasAttributeDivisor) {
+                    if(device.features.vertexAttributeDivisor()) {
                         VkVertexInputBindingDivisorDescriptionEXT divisorBinding = VkVertexInputBindingDivisorDescriptionEXT.calloc(stack)
                                 .binding(i)
                                 .divisor(bindings.getStepRate());
@@ -123,7 +123,7 @@ public record Vk11RenderPipeline(
 
             int polygonMode;
 
-            if(!device.hasFillModeNonSolid) polygonMode = VK10.VK_POLYGON_MODE_FILL;
+            if(!device.features.fillModeNonSolid()) polygonMode = VK10.VK_POLYGON_MODE_FILL;
             else polygonMode = Vk11Const.toVk(pipeline.getPolygonMode());
 
 			VkPipelineRasterizationStateCreateInfo rasterizationState = VkPipelineRasterizationStateCreateInfo.calloc(stack)

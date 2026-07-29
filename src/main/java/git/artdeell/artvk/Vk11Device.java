@@ -55,7 +55,7 @@ public class Vk11Device implements GpuDeviceBackend {
 	private final Vk11Queue computeQueue;
 	private final Vk11Queue transferQueue;
 	private final boolean isIntegratedIntelMoltenVK;
-    public final boolean hasFillModeNonSolid, hasAnisotropy, hasAttributeDivisor;
+    public final Vk11PhysicalDevice.Features features;
 	private final Vk11CommandEncoder commandEncoder;
 	private final Vk11RenderPassCache renderPassCache;
     private final Vk11FramebufferCache framebufferCache;
@@ -64,8 +64,7 @@ public class Vk11Device implements GpuDeviceBackend {
 		final ShaderSource defaultShaderSource,
 		final Vk11Instance instance,
 		final Vk11PhysicalDevice physicalDevice,
-		final Set<String> enabledDeviceExtensions,
-		final VkDevice vkDevice,
+        final VkDevice vkDevice,
 		final IntVMA vma
 	) {
 		this.defaultShaderSource = defaultShaderSource;
@@ -75,40 +74,27 @@ public class Vk11Device implements GpuDeviceBackend {
         this.vma = vmaObj.ptr;
 		Set<String> extensionNames = new HashSet<>();
 
-		for (String name : instance.getEnabledExtensions()) {
-			extensionNames.add(name + " (I)");
-		}
+		Vk11PhysicalDevice.Properties properties = physicalDevice.properties();
+        features = physicalDevice.features();
 
-		for (String name : enabledDeviceExtensions) {
-			extensionNames.add(name + " (D)");
-		}
-
-		VkPhysicalDeviceLimits limits = physicalDevice.vkPhysicalDeviceProperties().limits();
-		VkPhysicalDeviceVulkan11Properties vk11Properties = physicalDevice.vkPhysicalDeviceVulkan11Properties();
-        VkPhysicalDeviceFeatures features = physicalDevice.vkPhysicalDeviceFeatures().features();
-
-        hasFillModeNonSolid = features.fillModeNonSolid();
-        hasAnisotropy = features.samplerAnisotropy();
-        hasAttributeDivisor = enabledDeviceExtensions.contains("VK_EXT_vertex_attribute_divisor");
-
-        if(!hasFillModeNonSolid) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
+        if(!features.fillModeNonSolid()) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
 
 		this.deviceInfo = new DeviceInfo(
-			physicalDevice.deviceName(),
+			properties.deviceName(),
 			physicalDevice.vendorName(),
-			physicalDevice.driverInfo(),
+			properties.driverInfo(),
 			true,
 			"ArtVK",
-			limits.timestampPeriod(),
+			properties.timestampPeriod(),
 			new DeviceLimits(
-				hasAnisotropy ? (int)limits.maxSamplerAnisotropy() : 1,
-				(int)limits.minUniformBufferOffsetAlignment(),
-				limits.maxImageDimension2D(),
-				vk11Properties.maxMemoryAllocationSize() <= 0L ? Long.MAX_VALUE : vk11Properties.maxMemoryAllocationSize(),
+				features.samplerAnisotropy() ? properties.maxSamplerAnisotropy() : 1,
+                properties.minUniformBufferOffsetAlignment(),
+				properties.maxImageDimension2D(),
+				properties.maxMemoryAllocationSize(),
 				Integer.MAX_VALUE,
-				limits.maxColorAttachments()
+				properties.maxColorAttachments()
 			),
-			new DeviceFeatures(true, enabledDeviceExtensions.contains("VK_EXT_multi_draw"), false, features.multiDrawIndirect(), true, true, true),
+			new DeviceFeatures(true, features.multiDraw(), false, features.multiDrawIndirect(), true, true, true),
 			Collections.unmodifiableSet(extensionNames),
 			new HintsAndWorkarounds(false, false),
 			physicalDevice.deviceType()
@@ -131,9 +117,9 @@ public class Vk11Device implements GpuDeviceBackend {
 			this.transferQueue = this.computeQueue;
 		}
 
-		this.isIntegratedIntelMoltenVK = physicalDevice.vkPhysicalDeviceProperties().deviceType() == VK10.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
-			&& physicalDevice.vkPhysicalDeviceProperties().vendorID() == 32902
-			&& physicalDevice.vkPhysicalDeviceDriverProperties().driverID() == 14;
+		this.isIntegratedIntelMoltenVK = properties.deviceType() == VK10.VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+			&& properties.vendorId() == 0x8086
+			&& properties.driverId() == 14;
 		physicalDevice.close();
 		this.renderPassCache = new Vk11RenderPassCache(this);
         this.framebufferCache = new Vk11FramebufferCache(this);

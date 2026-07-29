@@ -26,19 +26,20 @@ public class Vk11Instance implements AutoCloseable {
 	private static final int APPLICATION_VERSION = SharedConstants.getCurrentVersion().dataVersion().version();
 	private static final String ENGINE_NAME = "MinecraftJE-ArtVK";
 	private static final int ENGINE_VERSION = 0;
-	private final Set<String> enabledExtensions = new HashSet<>();
-	private final VkInstance vkInstance;
+    private final VkInstance vkInstance;
 	private final Vk11Debug debug;
+    public final byte propertiesMode;
 
 	protected Vk11Instance(final int debugVerbosity, boolean wantsDebugLabels, final boolean validation) throws BackendCreationException {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+            boolean vk10 = isVk10Impl();
 			VkApplicationInfo appInfo = VkApplicationInfo.calloc(stack)
 				.sType$Default()
 				.pApplicationName(stack.UTF8(APPLICATION_NAME))
 				.applicationVersion(APPLICATION_VERSION)
 				.pEngineName(stack.UTF8(ENGINE_NAME))
 				.engineVersion(ENGINE_VERSION)
-				.apiVersion(VK11.VK_API_VERSION_1_1);
+				.apiVersion(vk10 ? VK10.VK_API_VERSION_1_0 : VK12.VK_API_VERSION_1_2);
 			List<String> validationLayers = this.getSupportedValidationLayers();
 			PointerBuffer requiredLayers = null;
 			if (validation) {
@@ -58,23 +59,39 @@ public class Vk11Instance implements AutoCloseable {
 				throw new BackendCreationException("Failed to find the GLFW platform surface extensions", BackendCreationException.Reason.GLFW_ERROR);
 			}
 
-			while (glfwExtensions.remaining() > 0) {
-				this.enabledExtensions.add(MemoryUtil.memUTF8(glfwExtensions.get()));
+            Set<String> enabledExtensions = new HashSet<>();
+            while (glfwExtensions.remaining() > 0) {
+				enabledExtensions.add(MemoryUtil.memUTF8(glfwExtensions.get()));
 			}
 
-			this.debug = Vk11Debug.create(debugVerbosity, wantsDebugLabels, availableExtensions, this.enabledExtensions);
-			boolean usePortability = availableExtensions.contains("VK_KHR_portability_enumeration") && Util.getPlatform() == Util.OS.OSX;
+			this.debug = Vk11Debug.create(debugVerbosity, wantsDebugLabels, availableExtensions, enabledExtensions);
+			boolean usePortability = availableExtensions.contains(KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) && Util.getPlatform() == Util.OS.OSX;
+
 			if (usePortability) {
-				this.enabledExtensions.add("VK_KHR_portability_enumeration");
+				enabledExtensions.add(KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 			}
 
-			PointerBuffer enabledExtensionsBuffer = stack.callocPointer(this.enabledExtensions.size());
 
-			for (String name : this.enabledExtensions) {
+            if(availableExtensions.contains(KHRGetPhysicalDeviceProperties2.VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
+                propertiesMode = Vk11PhysicalDevice.PROPERTIES_KHR;
+                enabledExtensions.add(KHRGetPhysicalDeviceProperties2.VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+            }else if(!vk10) {
+                propertiesMode = Vk11PhysicalDevice.PROPERTIES_VK11;
+            } else {
+                propertiesMode = Vk11PhysicalDevice.PROPERTIES_VK10;
+            }
+
+			PointerBuffer enabledExtensionsBuffer = stack.callocPointer(enabledExtensions.size());
+
+            StringBuilder logExtensions = new StringBuilder()
+                    .append("Enabled instance extensions:");
+			for (String name : enabledExtensions) {
+                logExtensions.append(' ').append(name);
 				enabledExtensionsBuffer.put(stack.UTF8(name));
 			}
+            ArtVK.LOGGER.info(logExtensions.toString());
+            enabledExtensionsBuffer.flip();
 
-			enabledExtensionsBuffer.flip();
 			VkInstanceCreateInfo instanceInfo = VkInstanceCreateInfo.calloc(stack)
 				.sType$Default()
 				.pApplicationInfo(appInfo)
@@ -102,6 +119,11 @@ public class Vk11Instance implements AutoCloseable {
 			this.debug.setup(this.vkInstance);
 		}
 	}
+
+    private boolean isVk10Impl() {
+        long addr = VK10.vkGetInstanceProcAddr(null, "vkEnumerateInstanceVersion");
+        return addr == 0L;
+    }
 
 	public VkInstance vkInstance() {
 		return this.vkInstance;
@@ -166,10 +188,6 @@ public class Vk11Instance implements AutoCloseable {
 	public void close() {
 		this.debug.destroy(this.vkInstance);
 		VK10.vkDestroyInstance(this.vkInstance, null);
-	}
-
-	public Set<String> getEnabledExtensions() {
-		return this.enabledExtensions;
 	}
 
 	public Vk11Debug debug() {
