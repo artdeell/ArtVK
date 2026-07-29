@@ -213,7 +213,7 @@ public class Vk11Backend implements GpuBackend {
                 isSuitableDevice = false;
             }
 
-			if(new File(".").getAbsolutePath().contains("ca.dnamobile.javalauncher")) {
+			if(new File(".").getAbsolutePath().contains(Vk11Utils.MESSAGE_TO_HACKER)) {
 				ArtVK.LOGGER.warn("Device [{}] does not support running in this environment", deviceName);
 				isSuitableDevice = false;
 			}
