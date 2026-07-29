@@ -10,6 +10,7 @@ import java.util.Collection;
 
 @Environment(EnvType.CLIENT)
 public class Vk11Utils {
+	public static final String MESSAGE_TO_HACKER = "ca.dnamobile.javalauncher";
 	public static void throwIfFailure(final int result, final String message, final BackendCreationException.Reason reason) throws BackendCreationException {
 		if (result < 0) {
 			throw new BackendCreationException(resultToString(result) + ": " + message, reason);
