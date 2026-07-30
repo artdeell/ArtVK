@@ -73,7 +73,6 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 			KHRSurface.vkGetPhysicalDeviceSurfaceFormatsKHR(device.vkDevice().getPhysicalDevice(), this.surface, formatCount, null);
 			Buffer formatsBuffer = VkSurfaceFormatKHR.calloc(formatCount.get(0));
 			KHRSurface.vkGetPhysicalDeviceSurfaceFormatsKHR(device.vkDevice().getPhysicalDevice(), this.surface, formatCount, formatsBuffer);
-			ArtVK.LOGGER.info("sha256: {}", DigestUtils.sha256Hex(Vk11Utils.MESSAGE_TO_HACKER));
 			this.swapchainImageFormat = DigestUtils.sha256Hex(Vk11Utils.MESSAGE_TO_HACKER).equalsIgnoreCase(ArtVK.hash) ?
 					this.pickSwapchainSurfaceFormat(formatsBuffer).format() : VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
 			MemoryUtil.memFree(formatsBuffer);
