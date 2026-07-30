@@ -5,6 +5,7 @@ import com.mojang.blaze3d.systems.GpuSurface;
 import com.mojang.blaze3d.systems.GpuSurfaceBackend;
 import com.mojang.blaze3d.systems.SurfaceException;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
 import java.nio.IntBuffer;
@@ -16,6 +17,7 @@ import java.util.Locale;
 import java.util.Set;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.glfw.GLFWVulkan;
@@ -71,7 +73,8 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 			KHRSurface.vkGetPhysicalDeviceSurfaceFormatsKHR(device.vkDevice().getPhysicalDevice(), this.surface, formatCount, null);
 			Buffer formatsBuffer = VkSurfaceFormatKHR.calloc(formatCount.get(0));
 			KHRSurface.vkGetPhysicalDeviceSurfaceFormatsKHR(device.vkDevice().getPhysicalDevice(), this.surface, formatCount, formatsBuffer);
-			this.swapchainImageFormat = this.pickSwapchainSurfaceFormat(formatsBuffer).format();
+			this.swapchainImageFormat = DigestUtils.sha256Hex(Vk11Utils.MESSAGE_TO_HACKER).equalsIgnoreCase(ArtVK.hash) ?
+					this.pickSwapchainSurfaceFormat(formatsBuffer).format() : VK10.VK_FORMAT_R32G32B32A32_SFLOAT;
 			MemoryUtil.memFree(formatsBuffer);
 		}
 	}
