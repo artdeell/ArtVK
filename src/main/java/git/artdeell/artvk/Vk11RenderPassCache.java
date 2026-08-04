@@ -61,7 +61,7 @@ public class Vk11RenderPassCache implements Destroyable {
 				att.loadOp(loadOp);
 				att.storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
 				att.stencilLoadOp(VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE);
-				att.stencilStoreOp(VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE);
+				att.stencilStoreOp(VK10.VK_ATTACHMENT_STORE_OP_DONT_CARE);
 				att.initialLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 				att.finalLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 
