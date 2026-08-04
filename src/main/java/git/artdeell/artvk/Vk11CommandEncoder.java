@@ -139,7 +139,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		this.submissionBuilder.signalSemaphore(vkSemaphore);
 	}
 
-	private void memoryBarrier(final MemoryStack stack) {
+	public void memoryBarrier(final MemoryStack stack) {
 		memoryBarrier(this.commandBuffer(), stack);
 	}
 
@@ -196,6 +196,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 
             boolean hasDepth = depthAttachment != null;
             Vk11GpuTextureView[] attachmentViews = new Vk11GpuTextureView[colorCount + (hasDepth ? 1 : 0)];
+            boolean[] clears = new boolean[attachmentViews.length];
 
             VkClearValue.Buffer clearValues = VkClearValue.calloc(attachmentViews.length, memoryStack);
             int[] colorFormats = new int[colorCount];
@@ -212,15 +213,29 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
                 textureView.disableTransferMode(memoryStack, currentCommandBuffer);
                 attachmentViews[i] = textureView;
                 colorFormats[i] = Vk11Const.toVk(textureView.texture().getFormat());
+                float[] pendingClear = textureView.texture().consumeClear();
                 if(attachment.clearValue().isPresent()) {
                     Vk11Utils.putArgb(clearValues.get(i).color(), attachment.clearValue().get());
+                    clears[i] = true;
+                }else if(pendingClear != null) {
+                    VkClearColorValue clearColorValue = clearValues.get(i).color();
+                    clearColorValue.float32(0, pendingClear[0]);
+                    clearColorValue.float32(1, pendingClear[1]);
+                    clearColorValue.float32(2, pendingClear[2]);
+                    clearColorValue.float32(3, pendingClear[3]);
+                    clears[i] = true;
                 }
             }
             if(hasDepth) {
                 attachmentViews[colorCount] = (Vk11GpuTextureView) depthAttachment.textureView();
                 depthFormat = Vk11Const.toVk(depthAttachment.textureView().texture().getFormat());
+                float[] pendingClearValue = attachmentViews[colorCount].texture().consumeClear();
                 if(depthAttachment.clearValue().isPresent()) {
                     clearValues.get(colorCount).depthStencil().depth((float) depthAttachment.clearValue().getAsDouble());
+                    clears[colorCount] = true;
+                } else if(pendingClearValue != null) {
+                    clearValues.get(colorCount).depthStencil().set(pendingClearValue[0], 0);
+                    clears[colorCount] = true;
                 }
             }
 
@@ -234,7 +249,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
                 break;
             }
 
-            long renderPass = this.device.renderPassCache().getOrCreateRenderPass(colorFormats, hasDepth, depthFormat);
+            long renderPass = this.device.renderPassCache().getOrCreateRenderPass(clears, colorFormats, hasDepth, depthFormat);
 
             long framebuffer = this.device.framebufferCache().getOrCreateFramebuffer(renderPass, width, height, attachmentViews);
 
@@ -284,36 +299,9 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
             submit();
         }
 	}
-
-	private void clearColorTextureUnsynced(final MemoryStack stack, final GpuTexture colorTexture, final Vector4fc clearColor) {
-		org.lwjgl.vulkan.VkClearColorValue vkClearColor = Vk11Utils.putArgb(org.lwjgl.vulkan.VkClearColorValue.calloc(stack), clearColor);
-		VkImageSubresourceRange subresourceRange = VkImageSubresourceRange.calloc(stack);
-		subresourceRange.baseMipLevel(0);
-		subresourceRange.levelCount(colorTexture.getMipLevels());
-		subresourceRange.baseArrayLayer(0);
-		subresourceRange.layerCount(1);
-		subresourceRange.aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT);
-		VK10.vkCmdClearColorImage(this.commandBuffer(), ((Vk11GpuTexture)colorTexture).vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, vkClearColor, subresourceRange);
-	}
-
-	public void clearDepthTextureUnsynced(final MemoryStack stack, final GpuTexture depthTexture, final double clearDepth) {
-		VkClearDepthStencilValue vkClearDepth = VkClearDepthStencilValue.calloc(stack).depth((float)clearDepth);
-		VkImageSubresourceRange subresourceRange = VkImageSubresourceRange.calloc(stack);
-		subresourceRange.baseMipLevel(0);
-		subresourceRange.levelCount(depthTexture.getMipLevels());
-		subresourceRange.baseArrayLayer(0);
-		subresourceRange.layerCount(1);
-		subresourceRange.aspectMask(VK10.VK_IMAGE_ASPECT_DEPTH_BIT);
-		VK10.vkCmdClearDepthStencilImage(this.commandBuffer(), ((Vk11GpuTexture)depthTexture).vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, vkClearDepth, subresourceRange);
-	}
-
 	@Override
 	public void clearColorTexture(final @NotNull GpuTexture colorTexture, final @NotNull Vector4fc clearColor) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-            ((Vk11GpuTexture) colorTexture).postTransferBarrier(stack, this.commandBuffer());
-			this.clearColorTextureUnsynced(stack, colorTexture, clearColor);
-			this.memoryBarrier(stack);
-		}
+        ((Vk11GpuTexture) colorTexture).insertClear(clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w());
 	}
 
 	@Override
@@ -323,12 +311,8 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
             final @NotNull GpuTexture depthTexture,
             final double clearDepth
     ) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-            ((Vk11GpuTexture) colorTexture).postTransferBarrier(stack, this.commandBuffer());
-			this.clearColorTextureUnsynced(stack, colorTexture, clearColor);
-			this.clearDepthTextureUnsynced(stack, depthTexture, clearDepth);
-			this.memoryBarrier(stack);
-		}
+        ((Vk11GpuTexture) colorTexture).insertClear(clearColor.x(), clearColor.y(), clearColor.z(), clearColor.w());
+        ((Vk11GpuTexture) depthTexture).insertClear((float) clearDepth);
 	}
 
 	@Override
@@ -380,10 +364,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 
 	@Override
 	public void clearDepthTexture(final @NotNull GpuTexture depthTexture, final double clearDepth) {
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			this.clearDepthTextureUnsynced(stack, depthTexture, clearDepth);
-			this.memoryBarrier(stack);
-		}
+        ((Vk11GpuTexture) depthTexture).insertClear((float) clearDepth);
 	}
 
 	@Override
@@ -425,8 +406,10 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		final int height
 	) {
 		GpuBufferSlice stagingBuffer = this.transientMemory.uploadStaging(source, 1L, 16);
-
+        Vk11GpuTexture vTex = (Vk11GpuTexture) destination;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+            vTex.postTransferBarrier(stack, commandBuffer());
+            vTex.insertPendingClear(stack, this);
 			VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
 			region.bufferOffset(stagingBuffer.offset());
 			region.bufferRowLength(width);
@@ -438,7 +421,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 			imageSubresource.layerCount(1);
 			region.imageOffset().set(destX, destY, 0);
 			region.imageExtent().set(width, height, 1);
-			VK10.vkCmdCopyBufferToImage(this.commandBuffer(), ((Vk11GpuBuffer)stagingBuffer.buffer()).vkBuffer(), ((Vk11GpuTexture)destination).vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, region);
+			VK10.vkCmdCopyBufferToImage(this.commandBuffer(), ((Vk11GpuBuffer)stagingBuffer.buffer()).vkBuffer(), vTex.vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, region);
 			this.memoryBarrier(stack);
 		}
 	}
@@ -461,8 +444,11 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		int texelSize = destination.getFormat().blockSize();
 		long skipTexels = sourceX + (long)sourceY * sourceWidth;
 		long skipBytes = skipTexels * texelSize;
+        Vk11GpuTexture vTex = (Vk11GpuTexture) destination;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+            vTex.postTransferBarrier(stack, commandBuffer());
+            vTex.insertPendingClear(stack, this);
 			VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);
 			region.bufferOffset(source.offset() + skipBytes);
 			region.bufferRowLength(sourceWidth);
@@ -474,7 +460,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 			imageSubresource.layerCount(1);
 			region.imageOffset().set(destinationX, destinationY, 0);
 			region.imageExtent().set(copyWidth, copyHeight, 1);
-			VK10.vkCmdCopyBufferToImage(this.commandBuffer(), ((Vk11GpuBuffer)source.buffer()).vkBuffer(), ((Vk11GpuTexture)destination).vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, region);
+			VK10.vkCmdCopyBufferToImage(this.commandBuffer(), ((Vk11GpuBuffer)source.buffer()).vkBuffer(), vTex.vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, region);
 			this.memoryBarrier(stack);
 		}
 	}
@@ -537,6 +523,7 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		Vk11GpuTexture vk11Dst = (Vk11GpuTexture)destination;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+            vk11Dst.insertPendingClear(stack, this);
 			VkImageSubresourceLayers subresourceLayers = VkImageSubresourceLayers.calloc(stack);
 			subresourceLayers.mipLevel(mipLevel);
 			subresourceLayers.baseArrayLayer(0);

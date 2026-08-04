@@ -25,22 +25,28 @@ public class Vk11RenderPassCache implements Destroyable {
 	}
 
 	public long getOrCreateRenderPass(
+        final boolean[] clearAttachments,
 		final int[] colorFormats,
 		final boolean hasDepth,
 		final int depthFormat
 	) {
-		long key = computeRenderPassKey(colorFormats, hasDepth, depthFormat);
+		long key = computeRenderPassKey(clearAttachments, colorFormats, hasDepth, depthFormat);
 		long cached = this.renderPassCache.get(key);
 		if (cached != 0L) {
 			return cached;
 		}
 
-		long renderPass = createRenderPass(colorFormats, hasDepth, depthFormat);
+		long renderPass = createRenderPass(clearAttachments, colorFormats, hasDepth, depthFormat);
 		this.renderPassCache.put(key, renderPass);
 		return renderPass;
 	}
 
-	private long createRenderPass(final int[] colorFormats, final boolean hasDepth, final int depthFormat) {
+	private long createRenderPass(
+            final boolean[] clearAttachments,
+            final int[] colorFormats,
+            final boolean hasDepth,
+            final int depthFormat
+    ) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			int attachmentCount = colorFormats.length + (hasDepth ? 1 : 0);
 			VkAttachmentDescription.Buffer attachments = VkAttachmentDescription.calloc(attachmentCount, stack);
@@ -48,13 +54,14 @@ public class Vk11RenderPassCache implements Destroyable {
 			VkAttachmentReference depthRef = null;
 
 			for (int i = 0; i < colorFormats.length; i++) {
+                int loadOp = clearAttachments[i] ? VK10.VK_ATTACHMENT_LOAD_OP_CLEAR : VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
 				VkAttachmentDescription att = attachments.get(i);
 				att.format(colorFormats[i]);
 				att.samples(VK10.VK_SAMPLE_COUNT_1_BIT);
-				att.loadOp(VK10.VK_ATTACHMENT_LOAD_OP_LOAD);
+				att.loadOp(loadOp);
 				att.storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
-				att.stencilLoadOp(VK10.VK_ATTACHMENT_LOAD_OP_CLEAR);
-				att.stencilStoreOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
+				att.stencilLoadOp(VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE);
+				att.stencilStoreOp(VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE);
 				att.initialLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 				att.finalLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 
@@ -65,13 +72,15 @@ public class Vk11RenderPassCache implements Destroyable {
 			}
 
 			if (hasDepth) {
-				VkAttachmentDescription att = attachments.get(colorFormats.length);
+                int depthIdx = colorFormats.length;
+                int loadOp = clearAttachments[depthIdx] ? VK10.VK_ATTACHMENT_LOAD_OP_CLEAR : VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
+				VkAttachmentDescription att = attachments.get(depthIdx);
 				att.format(depthFormat);
 				att.samples(VK10.VK_SAMPLE_COUNT_1_BIT);
-				att.loadOp(VK10.VK_ATTACHMENT_LOAD_OP_LOAD);
+				att.loadOp(loadOp);
 				att.storeOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
-				att.stencilLoadOp(VK10.VK_ATTACHMENT_LOAD_OP_CLEAR);
-				att.stencilStoreOp(VK10.VK_ATTACHMENT_STORE_OP_STORE);
+				att.stencilLoadOp(VK10.VK_ATTACHMENT_LOAD_OP_DONT_CARE);
+				att.stencilStoreOp(VK10.VK_ATTACHMENT_STORE_OP_DONT_CARE);
 				att.initialLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 				att.finalLayout(VK10.VK_IMAGE_LAYOUT_GENERAL);
 
@@ -115,7 +124,12 @@ public class Vk11RenderPassCache implements Destroyable {
 		}
 	}
 
-	private static long computeRenderPassKey(final int[] colorFormats, final boolean hasDepth, final int depthFormat) {
+	private static long computeRenderPassKey(
+            final boolean[] clearAttachments,
+            final int[] colorFormats,
+            final boolean hasDepth,
+            final int depthFormat
+    ) {
 		long key = 0;
 		for (int fmt : colorFormats) {
 			key = key * 31 + fmt;
@@ -124,6 +138,9 @@ public class Vk11RenderPassCache implements Destroyable {
 		if (hasDepth) {
 			key = key * 31 + depthFormat;
 		}
+        for(boolean clear : clearAttachments) {
+            key = key * 31 + (clear ? 1 : 0);
+        }
 		return key;
 	}
 

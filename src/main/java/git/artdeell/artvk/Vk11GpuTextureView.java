@@ -29,7 +29,7 @@ public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
 			imageViewCreateInfo.viewType(isCubemap ? VK10.VK_IMAGE_VIEW_TYPE_CUBE : VK10.VK_IMAGE_VIEW_TYPE_2D);
 			imageViewCreateInfo.format(Vk11Const.toVk(texture.getFormat()));
 			VkImageSubresourceRange subresourceRange = imageViewCreateInfo.subresourceRange();
-			subresourceRange.aspectMask(texture.getFormat().hasColorAspect() ? VK10.VK_IMAGE_ASPECT_COLOR_BIT : VK10.VK_IMAGE_ASPECT_DEPTH_BIT);
+			subresourceRange.aspectMask(texture.aspect);
 			subresourceRange.baseMipLevel(baseMipLevel);
 			subresourceRange.levelCount(mipLevels);
 			subresourceRange.baseArrayLayer(0);

@@ -313,8 +313,9 @@ public class Vk11Device implements GpuDeviceBackend {
             }
 
 			int depthFormat = VK10.VK_FORMAT_D32_SFLOAT;
-			long renderPassWithDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, true, depthFormat);
-			long renderPassWithoutDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
+            boolean[] clears = new boolean[colorFormats.length + 1];
+			long renderPassWithDepth = this.renderPassCache.getOrCreateRenderPass(clears, colorFormats, true, depthFormat);
+			long renderPassWithoutDepth = this.renderPassCache.getOrCreateRenderPass(clears, colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
 			return Vk11RenderPipeline.compile(this, modules.layout(), pipeline, modules.vertex(), modules.fragment(), renderPassWithDepth, renderPassWithoutDepth, pushConstantRange);
 		} catch (ShaderCompileException e) {
 			ArtVK.LOGGER.error("Couldn't compile pipeline {}: {}", pipeline.getLocation(), e.getMessage());

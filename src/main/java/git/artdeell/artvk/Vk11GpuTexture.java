@@ -2,6 +2,7 @@ package git.artdeell.artvk;
 
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.textures.GpuTexture;
+
 import java.nio.LongBuffer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -17,9 +18,12 @@ public class Vk11GpuTexture extends GpuTexture implements Destroyable {
 	private final Vk11Device device;
 	private final long vkImage;
 	private final long vmaAllocation;
+    protected final int aspect;
 	private boolean closed = false;
     private int transferLevel = -1;
 	private int views = 0;
+    private boolean clearPending = true;
+    private final float[] clearValue = new float[4];
 
 	public Vk11GpuTexture(
 		final Vk11Device device,
@@ -33,6 +37,7 @@ public class Vk11GpuTexture extends GpuTexture implements Destroyable {
 	) {
 		super(usage, label, format, width, height, depthOrLayers, mipLevels);
 		this.device = device;
+        this.aspect = this.getFormat().hasColorAspect() ? VK10.VK_IMAGE_ASPECT_COLOR_BIT : VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VkImageCreateInfo imageCreateInfo = VkImageCreateInfo.calloc(stack).sType$Default();
@@ -64,18 +69,21 @@ public class Vk11GpuTexture extends GpuTexture implements Destroyable {
 			barrier.srcQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
 			barrier.dstQueueFamilyIndex(VK10.VK_QUEUE_FAMILY_IGNORED);
 			barrier.image(this.vkImage);
-			VkImageSubresourceRange subresourceRange = barrier.subresourceRange();
-			subresourceRange.aspectMask(this.getFormat().hasColorAspect() ? VK10.VK_IMAGE_ASPECT_COLOR_BIT : VK10.VK_IMAGE_ASPECT_DEPTH_BIT);
-			subresourceRange.baseMipLevel(0);
-			subresourceRange.levelCount(this.getMipLevels());
-			subresourceRange.baseArrayLayer(0);
-			subresourceRange.layerCount(depthOrLayers);
+            fullResourceRange(barrier.subresourceRange());
 			VK10.vkCmdPipelineBarrier(device.createCommandEncoder().textureInitCommandBuffer(), VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, null, null, barrier);
 			device.instance().debug().setObjectName(device.vkDevice(), VK10.VK_OBJECT_TYPE_IMAGE, this.vkImage, label);
 		}
 
 		this.addViews();
 	}
+    
+    private void fullResourceRange(VkImageSubresourceRange subresourceRange) {
+        subresourceRange.aspectMask(aspect);
+        subresourceRange.baseMipLevel(0);
+        subresourceRange.levelCount(this.getMipLevels());
+        subresourceRange.baseArrayLayer(0);
+        subresourceRange.layerCount(this.getDepthOrLayers());
+    }
 
     /**
      * Prepare texture subresource for transfer after rendering
@@ -135,6 +143,57 @@ public class Vk11GpuTexture extends GpuTexture implements Destroyable {
             );
         }
         transferLevel = -1;
+    }
+
+    public void insertClear(float clearDepth) {
+        clearValue[0] = clearDepth;
+        clearPending = true;
+    }
+
+    public void insertClear(float a, float r, float g, float b) {
+        clearValue[0] = a;
+        clearValue[1] = r;
+        clearValue[2] = g;
+        clearValue[3] = b;
+        clearPending = true;
+    }
+
+    protected float[] consumeClear() {
+        boolean wasClearPending = clearPending;
+        clearPending = false;
+        return wasClearPending ? clearValue : null;
+    }
+
+    public void insertPendingClear(MemoryStack memoryStack, Vk11CommandEncoder encoder) {
+        if(!clearPending) return;
+        VkImageSubresourceRange range = VkImageSubresourceRange.calloc(memoryStack);
+        fullResourceRange(range);
+        if(this.getFormat().hasDepthAspect()) {
+            VkClearDepthStencilValue clearDepthStencilValue = VkClearDepthStencilValue.calloc(memoryStack);
+            clearDepthStencilValue.set(clearValue[0], 0);
+            VK10.vkCmdClearDepthStencilImage(
+                    encoder.commandBuffer(),
+                    vkImage,
+                    VK10.VK_IMAGE_LAYOUT_GENERAL,
+                    clearDepthStencilValue,
+                    range
+            );
+        } else {
+            VkClearColorValue clearColorValue = VkClearColorValue.calloc(memoryStack);
+            clearColorValue.float32(0, clearValue[0]);
+            clearColorValue.float32(1, clearValue[1]);
+            clearColorValue.float32(2, clearValue[2]);
+            clearColorValue.float32(3, clearValue[3]);
+            VK10.vkCmdClearColorImage(
+                    encoder.commandBuffer(),
+                    vkImage,
+                    VK10.VK_IMAGE_LAYOUT_GENERAL,
+                    clearColorValue,
+                    range
+            );
+        }
+        encoder.memoryBarrier(memoryStack);
+        clearPending = false;
     }
 
 	@Override
