@@ -3,7 +3,7 @@
 	"id": "artvk",
 	"version": "${version}",
 	"name": "ArtVK",
-	"description": "ArtVK is a Blaze3D backend implementation that runs on (almost) unextended Vulkan 1.1",
+	"description": "ArtVK is a Blaze3D backend implementation that runs on (almost) unextended Vulkan 1.0",
 	"authors": [
 		"Maksim Belov (artDev)"
 	],
