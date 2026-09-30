@@ -1,6 +1,7 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.common.BaseGpuTextureView;
 import java.nio.LongBuffer;
 import java.util.HashSet;
 import java.util.Set;
@@ -12,7 +13,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 
 @Environment(EnvType.CLIENT)
-public class Vk11GpuTextureView extends GpuTextureView implements Destroyable {
+public class Vk11GpuTextureView extends BaseGpuTextureView implements Destroyable {
     private final Set<Dependent> dependents = new HashSet<>();
 	private final Vk11Device device;
 	private final long vkImageView;

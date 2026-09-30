@@ -1,6 +1,6 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.BackendCreationException;
+import com.mojang.renderpearl.api.device.BackendCreationException;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.joml.Vector4fc;

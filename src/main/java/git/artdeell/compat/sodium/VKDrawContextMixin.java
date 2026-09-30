@@ -1,8 +1,8 @@
 package git.artdeell.compat.sodium;
 
 import com.llamalad7.mixinextras.sugar.Local;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.commands.RenderPass;
 import git.artdeell.artvk.Vk11RenderPass;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.DrawContext;
 import net.caffeinemc.mods.sodium.client.gpu.device.context.VKDrawContext;
@@ -28,8 +28,10 @@ public class VKDrawContextMixin {
     @Shadow
     protected long layout;
 
+    // TODO: XXX ABI BREAKAGE - RenderPass moved from com.mojang.blaze3d.systems to
+    // com.mojang.renderpearl.api.commands, so the field descriptor Sodium writes this pass into changed.
     @Inject(method = "setContext", at = @At(value = "FIELD",
-            target = "Lnet/caffeinemc/mods/sodium/client/gpu/device/context/VKDrawContext;pass:Lcom/mojang/blaze3d/systems/RenderPass;",
+            target = "Lnet/caffeinemc/mods/sodium/client/gpu/device/context/VKDrawContext;pass:Lcom/mojang/renderpearl/api/commands/RenderPass;",
             opcode = Opcodes.PUTFIELD,
             shift = At.Shift.AFTER), cancellable = true)
     public void injectValues(RenderPass pass, RenderPipeline pipeline, CallbackInfo ci) throws NoSuchFieldException, IllegalAccessException {

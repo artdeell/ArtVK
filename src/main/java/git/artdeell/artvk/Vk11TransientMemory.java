@@ -1,14 +1,12 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.TransientMemory;
-import com.mojang.blaze3d.util.TransientBlockAllocator;
-import it.unimi.dsi.fastutil.Pair;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.TransientMemory;
+import com.mojang.renderpearl.backend.util.TransientBlockAllocator;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntComparator;
 import it.unimi.dsi.fastutil.objects.ReferenceArrayList;
-import it.unimi.dsi.fastutil.objects.ReferenceReferenceImmutablePair;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
@@ -40,12 +38,12 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 	private final Vk11Device device;
 	private final Vk11CommandEncoder encoder;
 	private final boolean useDeviceMemoryForMappedGpuStaging;
-	private final TransientBlockAllocator<Long> cpuBlockAllocator = new TransientBlockAllocator<>(
-		BLOCK_SIZE, MAX_CPU_ALIGNMENT, TransientBlockAllocator.Allocator.create(MemoryUtil::nmemAlloc, MemoryUtil::nmemFree)
+	private final TransientBlockAllocator<TransientBlockAllocator.Allocator.CpuBlock> cpuBlockAllocator = new TransientBlockAllocator<>(
+		BLOCK_SIZE, MAX_CPU_ALIGNMENT, TransientBlockAllocator.Allocator.CpuBlock.memalloc()
 	);
 	private final TransientBlockAllocator<Vk11TransientMemory.VulkanAllocation> stagingBlockAllocator;
 	private final TransientBlockAllocator<Vk11TransientMemory.VulkanAllocation> gpuBlockAllocator;
-	private final TransientBlockAllocator<Pair<Vk11TransientMemory.VulkanAllocation, Vk11TransientMemory.VulkanAllocation>> gpuMappedBlockAllocator;
+	private final TransientBlockAllocator<Vk11TransientMemory.GpuMappedAllocation> gpuMappedBlockAllocator;
 	private long submitIndex = 0L;
 	private boolean anyCommandRecorded = false;
 	private @Nullable VkCommandBuffer commandBuffer;
@@ -135,17 +133,17 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 		this.submitIndex++;
 	}
 
-	private void recordGpuMappedCopy(final Pair<Vk11TransientMemory.VulkanAllocation, Vk11TransientMemory.VulkanAllocation> block) {
-		if (block.first() != block.second()) {
-			assert block.first().size == block.second().size;
+	private void recordGpuMappedCopy(final Vk11TransientMemory.GpuMappedAllocation block) {
+		if (block.staging() != block.gpu()) {
+			assert block.staging().size == block.gpu().size;
 
 			try (MemoryStack stack = MemoryStack.stackPush()) {
 				Buffer region = VkBufferCopy.calloc(1, stack);
 				region.srcOffset(0L);
 				region.dstOffset(0L);
-				region.size(block.first().size);
+				region.size(block.staging().size);
 				assert this.commandBuffer != null;
-				VK10.vkCmdCopyBuffer(this.commandBuffer, block.first().vkBuffer, block.second().vkBuffer, region);
+				VK10.vkCmdCopyBuffer(this.commandBuffer, block.staging().vkBuffer, block.gpu().vkBuffer, region);
 				this.anyCommandRecorded = true;
 			}
 		}
@@ -192,29 +190,30 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 		Vma.vmaDestroyBuffer(this.device.vma(), allocation.vkBuffer, allocation.vmaAllocation);
 	}
 
-	private Pair<Vk11TransientMemory.VulkanAllocation, Vk11TransientMemory.VulkanAllocation> allocateGpuMappedVulkanBlock(final long size) {
+	private Vk11TransientMemory.GpuMappedAllocation allocateGpuMappedVulkanBlock(final long size) {
 		assert size >= BLOCK_SIZE;
 		assert size >= this.gpuBlockAllocator.blockSize();
 		if (this.useDeviceMemoryForMappedGpuStaging) {
 			TransientBlockAllocator.Allocation<Vk11TransientMemory.VulkanAllocation> block = this.gpuBlockAllocator.allocate(size, MAX_CPU_ALIGNMENT, size, 1L);
 			assert block.offset() == 0L;
-			return new ReferenceReferenceImmutablePair<>(block.block(), block.block());
+			return new Vk11TransientMemory.GpuMappedAllocation(block.block(), block.block());
 		} else {
 			assert size >= this.stagingBlockAllocator.blockSize();
 			TransientBlockAllocator.Allocation<Vk11TransientMemory.VulkanAllocation> stagingBlock = this.stagingBlockAllocator.allocate(size, MAX_CPU_ALIGNMENT, size, 1L);
 			TransientBlockAllocator.Allocation<Vk11TransientMemory.VulkanAllocation> gpuBlock = this.gpuBlockAllocator.allocate(size, MAX_CPU_ALIGNMENT, size, 1L);
-			return new ReferenceReferenceImmutablePair<>(stagingBlock.block(), gpuBlock.block());
+			return new Vk11TransientMemory.GpuMappedAllocation(stagingBlock.block(), gpuBlock.block());
 		}
 	}
 
-	private void freeGpuMappedVulkanBlock(final Pair<Vk11TransientMemory.VulkanAllocation, Vk11TransientMemory.VulkanAllocation> allocations) {
+	private void freeGpuMappedVulkanBlock(final Vk11TransientMemory.GpuMappedAllocation allocations) {
 	}
 
 	@Override
 	public ByteBuffer allocateCpu(final long size, final long alignment, final long minimumAllocation, final long elementSize) {
 		assert size <= Integer.MAX_VALUE;
-		TransientBlockAllocator.Allocation<Long> alloc = this.cpuBlockAllocator.allocate(size, alignment, minimumAllocation, elementSize);
-		return MemoryUtil.memByteBuffer(alloc.block() + alloc.offset(), (int)alloc.size());
+		TransientBlockAllocator.Allocation<TransientBlockAllocator.Allocator.CpuBlock> alloc = this.cpuBlockAllocator
+			.allocate(size, alignment, minimumAllocation, elementSize);
+		return MemoryUtil.memByteBuffer(alloc.block().address() + alloc.offset(), (int)alloc.size());
 	}
 
 	@Override
@@ -249,12 +248,12 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 		final long size, final long alignment, final @GpuBuffer.Usage int usage, final long minimumAllocation, final long elementSize
 	) {
 		assert size <= Integer.MAX_VALUE;
-		TransientBlockAllocator.Allocation<Pair<Vk11TransientMemory.VulkanAllocation, Vk11TransientMemory.VulkanAllocation>> alloc = this.gpuMappedBlockAllocator
+		TransientBlockAllocator.Allocation<Vk11TransientMemory.GpuMappedAllocation> alloc = this.gpuMappedBlockAllocator
 			.allocate(size, alignment, minimumAllocation, elementSize);
 		Vk11TransientMemory.TransientGpuBuffer apiBuffer = new Vk11TransientMemory.TransientGpuBuffer(
-			alloc.block().second().vkBuffer, usage, (int)alloc.block().first().size, this.submitIndex
+			alloc.block().gpu().vkBuffer, usage, (int)alloc.block().staging().size, this.submitIndex
 		);
-		ByteBuffer cpuBuffer = MemoryUtil.memByteBuffer(alloc.block().first().hostPtr + alloc.offset(), (int)alloc.size());
+		ByteBuffer cpuBuffer = MemoryUtil.memByteBuffer(alloc.block().staging().hostPtr + alloc.offset(), (int)alloc.size());
 		return new GpuBufferSlice.MappedView(new GpuBufferSlice(apiBuffer, alloc.offset(), alloc.size()), cpuBuffer, () -> {});
 	}
 
@@ -319,7 +318,7 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 	public List<GpuBufferSlice> multiUpload(final List<ByteBuffer> data, final long alignment, final @GpuBuffer.Usage int usage, final boolean staging) {
 		ReferenceArrayList<GpuBufferSlice> uploadedBuffers = new ReferenceArrayList<>();
 		uploadedBuffers.size(data.size());
-		TransientBlockAllocator<?> allocatorInUse = staging ? this.stagingBlockAllocator : this.gpuMappedBlockAllocator;
+		TransientBlockAllocator<? extends TransientBlockAllocator.Allocator.Block> allocatorInUse = staging ? this.stagingBlockAllocator : this.gpuMappedBlockAllocator;
 		IntArrayList sortedDataIndices = IntArrayList.toList(IntStream.range(0, data.size()));
 		sortedDataIndices.sort(IntComparator.comparing(index -> data.get(index).remaining()));
 
@@ -404,6 +403,18 @@ public class Vk11TransientMemory implements TransientMemory, Destroyable {
 	}
 
 	@Environment(EnvType.CLIENT)
-	private record VulkanAllocation(long vkBuffer, long vmaAllocation, long hostPtr, long size) {
+	private record VulkanAllocation(long vkBuffer, long vmaAllocation, long hostPtr, long size) implements TransientBlockAllocator.Allocator.Block {
+		@Override
+		public boolean suboptimal() {
+			return false;
+		}
+	}
+
+	@Environment(EnvType.CLIENT)
+	private record GpuMappedAllocation(VulkanAllocation staging, VulkanAllocation gpu) implements TransientBlockAllocator.Allocator.Block {
+		@Override
+		public boolean suboptimal() {
+			return false;
+		}
 	}
 }

@@ -1,6 +1,6 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.GpuQueryPool;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
 import java.nio.LongBuffer;
 import java.util.OptionalLong;
 import net.fabricmc.api.EnvType;

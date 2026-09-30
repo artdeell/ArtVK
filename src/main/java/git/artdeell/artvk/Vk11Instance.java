@@ -1,6 +1,6 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.BackendCreationException;
+import com.mojang.renderpearl.api.device.BackendCreationException;
 
 import java.nio.IntBuffer;
 import java.util.ArrayList;
@@ -14,7 +14,7 @@ import net.fabricmc.api.Environment;
 import net.minecraft.SharedConstants;
 import net.minecraft.util.Util;
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.glfw.GLFWVulkan;
+import org.lwjgl.sdl.SDLVulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -57,14 +57,18 @@ public class Vk11Instance implements AutoCloseable {
 			}
 
 			Set<String> availableExtensions = this.getSupportedInstanceExtensions();
-			PointerBuffer glfwExtensions = GLFWVulkan.glfwGetRequiredInstanceExtensions();
-			if (glfwExtensions == null) {
-				throw new BackendCreationException("Failed to find the GLFW platform surface extensions", BackendCreationException.Reason.GLFW_ERROR);
+			PointerBuffer platformExtensions = SDLVulkan.SDL_Vulkan_GetInstanceExtensions();
+			if (platformExtensions == null) {
+				throw new BackendCreationException("Failed to find the SDL platform surface extensions", BackendCreationException.Reason.PLATFORM_ERROR);
 			}
 
             Set<String> enabledExtensions = new HashSet<>();
-            while (glfwExtensions.remaining() > 0) {
-				enabledExtensions.add(MemoryUtil.memUTF8(glfwExtensions.get()));
+            while (platformExtensions.remaining() > 0) {
+				// SDL already reports the portability extension on macOS, re-adding it below would be a duplicate
+				String extension = MemoryUtil.memUTF8(platformExtensions.get());
+				if (!extension.equals(KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+					enabledExtensions.add(extension);
+				}
 			}
 
 			this.debug = Vk11Debug.create(debugVerbosity, wantsDebugLabels, availableExtensions, enabledExtensions);

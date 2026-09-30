@@ -1,7 +1,8 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.backend.common.BaseGpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.function.Supplier;
@@ -18,7 +19,7 @@ import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkBufferCreateInfo;
 
 @Environment(EnvType.CLIENT)
-public abstract class Vk11GpuBuffer extends GpuBuffer implements Destroyable {
+public abstract class Vk11GpuBuffer extends BaseGpuBuffer implements Destroyable {
 	private final long vkBuffer;
 
 	public Vk11GpuBuffer(final long vkBuffer, final @GpuBuffer.Usage int usage, final long size) {

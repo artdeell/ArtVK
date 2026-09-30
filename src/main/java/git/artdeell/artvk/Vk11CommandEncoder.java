@@ -1,16 +1,16 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.buffers.GpuFence;
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.GpuQueryPool;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassBackend;
-import com.mojang.blaze3d.systems.RenderPassDescriptor;
-import com.mojang.blaze3d.systems.TransientMemory;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.GpuFence;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.backend.api.RenderPassBackend;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.buffers.TransientMemory;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
@@ -38,7 +38,10 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 	private final Vk11CommandPool[] commandPools = new Vk11CommandPool[MAX_SUBMITS_IN_FLIGHT];
 	private @Nullable VkCommandBuffer currentCommandBuffer;
 	private @Nullable Vk11RenderPass currentRenderPass;
-	private final java.util.ArrayList<Vk11DescriptorPool> descriptorPools = new java.util.ArrayList<>();
+	// TODO: XXX ABI BREAKAGE - GpuDeviceBackend#compilePipeline now runs on Util.backgroundExecutor() instead of
+	// the render thread, so pipelines register their descriptor pool from a worker thread while submit() iterates
+	// this list. Copy-on-write keeps that iteration safe (and it is walked once per frame, not written often).
+	private final java.util.concurrent.CopyOnWriteArrayList<Vk11DescriptorPool> descriptorPools = new java.util.concurrent.CopyOnWriteArrayList<>();
 
 	public Vk11CommandEncoder(final Vk11Device device) {
 		this.device = device;
@@ -226,31 +229,25 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 
             this.device.instance().debug().beginDebugGroup(this.commandBuffer(), descriptor.label());
 
-            int width = 0, height = 0;
-            for(Vk11GpuTextureView view : attachmentViews) {
-                if(view == null) continue;
-                width = view.getWidth(0);
-                height = view.getHeight(0);
-                break;
-            }
+            RenderPass.RenderArea renderArea = descriptor.renderArea();
 
             long renderPass = this.device.renderPassCache().getOrCreateRenderPass(colorFormats, hasDepth, depthFormat);
 
-            long framebuffer = this.device.framebufferCache().getOrCreateFramebuffer(renderPass, width, height, attachmentViews);
+            long framebuffer = this.device.framebufferCache().getOrCreateFramebuffer(renderPass, renderArea.width(), renderArea.height(), attachmentViews);
 
             // Begin render pass
             VkRenderPassBeginInfo renderPassBeginInfo = VkRenderPassBeginInfo.calloc(memoryStack).sType$Default();
             renderPassBeginInfo.renderPass(renderPass);
             renderPassBeginInfo.framebuffer(framebuffer);
-            renderPassBeginInfo.renderArea().offset().set(descriptor.renderArea != null ? descriptor.renderArea.x() : 0, descriptor.renderArea != null ? descriptor.renderArea.y() : 0);
-            renderPassBeginInfo.renderArea().extent().set(width, height);
+            renderPassBeginInfo.renderArea().offset().set(renderArea.x(), renderArea.y());
+            renderPassBeginInfo.renderArea().extent().set(renderArea.width(), renderArea.height());
             renderPassBeginInfo.pClearValues(clearValues);
             renderPassBeginInfo.clearValueCount(attachmentViews.length);
 
             VK10.vkCmdBeginRenderPass(this.commandBuffer(), renderPassBeginInfo, VK10.VK_SUBPASS_CONTENTS_INLINE);
 
             this.currentRenderPass = new Vk11RenderPass(
-                    this.device, this, this.commandBuffer(), descriptor.renderArea, width, height, hasDepth, descriptor.label()
+                    this.device, this, this.commandBuffer(), renderArea, renderArea.width(), renderArea.height(), hasDepth, descriptor.label()
             );
             return this.currentRenderPass;
         }
@@ -340,21 +337,21 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 		final int regionX,
 		final int regionY,
 		final int regionWidth,
-		final int regionHeight
+		final int regionHeight,
+		final int mipLevel
 	) {
 		try (
-			GpuTextureView colorTextureView = this.device.createTextureView(colorTexture);
-			GpuTextureView depthTextureView = this.device.createTextureView(depthTexture);
+			GpuTextureView colorTextureView = this.device.createTextureView(colorTexture, mipLevel, 1);
+			GpuTextureView depthTextureView = this.device.createTextureView(depthTexture, mipLevel, 1);
 			MemoryStack stack = MemoryStack.stackPush()
 		) {
             ((Vk11GpuTexture) colorTexture).postTransferBarrier(stack, this.commandBuffer());
 
-			this.createRenderPass(
-				RenderPassDescriptor.create(() -> "ClearColorDepthTextures")
-					.withColorAttachment(colorTextureView)
-					.withDepthAttachment(depthTextureView)
-					.withRenderArea(new RenderPass.RenderArea(0, 0, colorTexture.getWidth(0), colorTexture.getHeight(0)))
-			);
+			RenderPassDescriptor.Builder clearDescriptor = RenderPassDescriptor.builder(() -> "ClearColorDepthTextures")
+				.withColorAttachment(colorTextureView)
+				.withDepthAttachment(depthTextureView)
+				.withRenderArea(new RenderPass.RenderArea(0, 0, colorTexture.getWidth(mipLevel), colorTexture.getHeight(mipLevel)));
+			this.createRenderPass(clearDescriptor.build());
 			assert this.currentRenderPass != null;
 			org.lwjgl.vulkan.VkClearRect.Buffer rects = org.lwjgl.vulkan.VkClearRect.calloc(1, stack);
 			rects.baseArrayLayer(0);
