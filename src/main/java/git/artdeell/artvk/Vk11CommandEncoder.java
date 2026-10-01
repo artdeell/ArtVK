@@ -16,6 +16,7 @@ import java.nio.LongBuffer;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
