@@ -139,38 +139,35 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void setUniform(final int index, final @Nullable Object value) {
-		// TODO: XXX ABI BREAKAGE - uniforms are now addressed by their index into the pipeline's flattened
-		// uniform list (a GpuBufferSlice, a TextureViewAndSampler, or null) instead of by name.
-		if (value == null) {
-			if (uniforms[index] != null || textures[index] != null) {
-				uniforms[index] = null;
-				textures[index] = null;
-				anyDescriptorDirty = true;
-			}
+		// This was reworked and can cause bugs
+        switch (value) {
+            case null -> {
+                if (uniforms[index] != null || textures[index] != null) {
+                    uniforms[index] = null;
+                    textures[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            case GpuBufferSlice slice -> {
+                GpuBufferSlice oldSlice = (GpuBufferSlice) uniforms[index];
+                if (oldSlice == null || oldSlice.buffer() != slice.buffer() || oldSlice.offset() != slice.offset() || oldSlice.length() != slice.length()) {
+                    uniforms[index] = slice;
+                    textures[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            case TextureViewAndSampler pair -> {
+                TextureViewAndSampler oldValue = textures[index];
+                if (oldValue == null || oldValue.view() != pair.view() || oldValue.sampler() != pair.sampler()) {
+                    textures[index] = pair;
+                    uniforms[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            default -> throw new IllegalArgumentException("Unsupported uniform value type " + value.getClass().getName());
+        }
 
-			return;
-		}
-
-		if (value instanceof GpuBufferSlice slice) {
-			GpuBufferSlice oldSlice = (GpuBufferSlice) uniforms[index];
-
-			if (oldSlice == null || oldSlice.buffer() != slice.buffer() || oldSlice.offset() != slice.offset() || oldSlice.length() != slice.length()) {
-				uniforms[index] = slice;
-				textures[index] = null;
-				anyDescriptorDirty = true;
-			}
-		} else if (value instanceof TextureViewAndSampler pair) {
-			TextureViewAndSampler oldValue = textures[index];
-
-			if (oldValue == null || oldValue.view() != pair.view() || oldValue.sampler() != pair.sampler()) {
-				textures[index] = pair;
-				uniforms[index] = null;
-				anyDescriptorDirty = true;
-			}
-		} else {
-			throw new IllegalArgumentException("Unsupported uniform value type " + value.getClass().getName());
-		}
-	}
+    }
 
 	@Override
 	public void enableScissor(final int x, final int y, final int width, final int height) {
