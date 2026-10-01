@@ -77,7 +77,8 @@ public class Vk11Device implements GpuDeviceBackend {
 				properties.maxColorAttachments(),
 				Integer.MAX_VALUE
 			),
-			new DeviceFeatures(true, features.multiDraw(), false, true, true, true, true, true),
+			// TODO: Correctly fill actual supported features
+			new DeviceFeatures(true, features.shaderDrawParameters(), features.multiDraw(), features.multiDraw(), true, true, true, true),
 			Collections.emptySet(), // TODO: maybe implement this?
 			new HintsAndWorkarounds(false, false, false, false),
 			physicalDevice.deviceType()
