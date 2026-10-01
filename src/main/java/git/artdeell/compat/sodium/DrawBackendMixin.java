@@ -15,9 +15,6 @@ public class DrawBackendMixin {
     @Inject(method = "chooseBackend", at = @At(value = "HEAD"), cancellable = true)
     private static void injectBackend(CallbackInfoReturnable<DrawBackend> cir){
         // Basically how Sodium picks the correct draw backend
-        // TODO: XXX ABI BREAKAGE - Sodium's GpuDeviceAccessor returns com.mojang.blaze3d.systems.GpuDeviceBackend,
-        // which moved to com.mojang.renderpearl.backend.api, so we can no longer ask the frontend for its backend
-        // and instead track whether this backend is the live one.
         GpuDevice device = RenderSystem.getDevice();
         if (Vk11Backend.deviceActive) {
             if(device.getDeviceInfo().features().multiDrawDirectInterleaved())
