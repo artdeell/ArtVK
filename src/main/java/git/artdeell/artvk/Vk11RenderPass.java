@@ -15,6 +15,8 @@ import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
 import java.util.function.Supplier;
+
+import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.SharedConstants;
@@ -195,9 +197,14 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void setVertexBuffer(final int slot, final @Nullable GpuBufferSlice vertexBuffer) {
+		if(vertexBuffer == null) {
+			// The game now sends null vertex buffer sometimes, as we don't support nullDescriptor we'll just ignore the binding. Sadly
+			// This is also something that the official backend does.
+			return;
+		}
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			long buffer = vertexBuffer != null ? ((Vk11GpuBuffer)vertexBuffer.buffer()).vkBuffer() : 0L;
-			long offset = vertexBuffer != null ? vertexBuffer.offset() : 0L;
+			long buffer = ((Vk11GpuBuffer)vertexBuffer.buffer()).vkBuffer();
+			long offset = vertexBuffer.offset();
 			VK10.vkCmdBindVertexBuffers(commandBuffer(), slot, stack.longs(buffer), stack.longs(offset));
 		}
 	}
