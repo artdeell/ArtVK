@@ -35,6 +35,7 @@ public class Vk11Device implements GpuDeviceBackend {
 	private final VkDevice vkDevice;
     private final IntVMA vmaObj;
 	private final long vma;
+	private final int apiVersion;
 	private final DeviceInfo deviceInfo;
 	private final Vk11Queue graphicsQueue;
 	private final Vk11Queue computeQueue;
@@ -58,6 +59,8 @@ public class Vk11Device implements GpuDeviceBackend {
 
         Vk11PhysicalDevice.Properties properties = physicalDevice.properties();
         features = physicalDevice.features();
+
+		this.apiVersion = physicalDevice.normalizedApiVersion();
 
         if(!features.fillModeNonSolid()) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
 
@@ -147,6 +150,10 @@ public class Vk11Device implements GpuDeviceBackend {
 
 	public long vma() {
 		return this.vma;
+	}
+
+	public int apiVersion() {
+		return apiVersion;
 	}
 
 	public Vk11RenderPassCache renderPassCache() {
