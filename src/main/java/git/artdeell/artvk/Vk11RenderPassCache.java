@@ -24,7 +24,9 @@ public class Vk11RenderPassCache implements Destroyable {
 		this.device = device;
 	}
 
-	public long getOrCreateRenderPass(
+	// TODO: XXX ABI BREAKAGE - pipelines are compiled on Util.backgroundExecutor() now and they build their
+	// render pass objects here, so this cache is shared between the worker thread and the render thread.
+	public synchronized long getOrCreateRenderPass(
 		final int[] colorFormats,
 		final boolean hasDepth,
 		final int depthFormat
@@ -127,7 +129,7 @@ public class Vk11RenderPassCache implements Destroyable {
 		return key;
 	}
 
-    private void invalidateRenderPasses() {
+    private synchronized void invalidateRenderPasses() {
         for (long rp : this.renderPassCache.values()) {
             VK10.vkDestroyRenderPass(device.vkDevice(), rp, null);
         }

@@ -1,10 +1,10 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.CommandEncoderBackend;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.systems.GpuSurfaceBackend;
-import com.mojang.blaze3d.systems.SurfaceException;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
+import com.mojang.renderpearl.api.device.SurfaceException;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongList;
 import java.nio.IntBuffer;
@@ -14,11 +14,13 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
-import org.lwjgl.glfw.GLFWVulkan;
+import org.lwjgl.sdl.SDLError;
+import org.lwjgl.sdl.SDLVulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -43,17 +45,18 @@ public class Vk11GpuSurface implements GpuSurfaceBackend {
 	private boolean swapchainSuboptimal;
 	private boolean swapchainOutOfDate;
 	private final Set<GpuSurface.PresentMode> supportedPresentModes;
+	private final BooleanSupplier isIconified;
 
-	public Vk11GpuSurface(final Vk11Device device, final long windowHandle) {
+	public Vk11GpuSurface(final Vk11Device device, final long windowHandle, final BooleanSupplier isIconified) {
 		this.device = device;
 		this.presentQueue = device.graphicsQueue().vkQueue();
+		this.isIconified = isIconified;
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			LongBuffer handlePtr = stack.longs(0L);
-			Vk11Utils.crashIfFailure(
-                    GLFWVulkan.glfwCreateWindowSurface(device.instance().vkInstance(), windowHandle, null, handlePtr),
-				"Failed to create window surface"
-			);
+			if (!SDLVulkan.SDL_Vulkan_CreateSurface(windowHandle, device.instance().vkInstance(), null, handlePtr)) {
+				throw new IllegalStateException("Failed to create window surface: " + SDLError.SDL_GetError());
+			}
 			this.surface = handlePtr.get(0);
 			IntBuffer countPtr = stack.callocInt(1);
 			Vk11Utils.crashIfFailure(

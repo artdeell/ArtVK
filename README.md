@@ -1,5 +1,5 @@
 # ArtVK
-This Fabric mod for Minecraft 26.2 implements a Blaze3D backend that runs on Vulkan 1.0 devices. I got
+This Fabric mod for Minecraft 26.2 implements a RenderPearl backend that runs on Vulkan 1.0 devices. I got
 rid of most of the big issues, however, it is still quite experimental.
 ## AI usage notice
 AI was in heavy use during the initial development of this mod. Quite a bit of stuff doesn't make sense still,

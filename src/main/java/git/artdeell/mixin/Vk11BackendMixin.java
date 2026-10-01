@@ -1,6 +1,6 @@
 package git.artdeell.mixin;
 
-import com.mojang.blaze3d.systems.GpuBackend;
+import com.mojang.renderpearl.api.device.GpuBackend;
 import git.artdeell.artvk.Vk11Backend;
 import net.minecraft.client.PreferredGraphicsApi;
 import org.spongepowered.asm.mixin.Mixin;

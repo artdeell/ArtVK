@@ -1,53 +1,41 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.preprocessor.GlslPreprocessor;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.shaders.ShaderType;
-import com.mojang.blaze3d.systems.DeviceFeatures;
-import com.mojang.blaze3d.systems.DeviceInfo;
-import com.mojang.blaze3d.systems.DeviceLimits;
-import com.mojang.blaze3d.systems.GpuDeviceBackend;
-import com.mojang.blaze3d.systems.GpuQueryPool;
-import com.mojang.blaze3d.systems.GpuSurfaceBackend;
-import com.mojang.blaze3d.systems.HintsAndWorkarounds;
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.device.DeviceFeatures;
+import com.mojang.renderpearl.api.device.DeviceInfo;
+import com.mojang.renderpearl.api.device.DeviceLimits;
+import com.mojang.renderpearl.backend.api.GpuDeviceBackend;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
+import com.mojang.renderpearl.api.device.HintsAndWorkarounds;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.ints.IntIntPair;
 import java.nio.ByteBuffer;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.OptionalDouble;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.client.renderer.ShaderDefines;
-import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.vulkan.*;
 
 @Environment(EnvType.CLIENT)
 public class Vk11Device implements GpuDeviceBackend {
-    private final ShaderSource defaultShaderSource;
-	private final Map<RenderPipeline, Vk11RenderPipeline> pipelineCache = new IdentityHashMap<>();
-	private final Map<ShaderCompilationKey, Vk11IntermediaryShaderModule> shaderCache = new HashMap<>();
 	private final Vk11Instance instance;
 	private final VkDevice vkDevice;
     private final IntVMA vmaObj;
 	private final long vma;
-	private final Vk11GlslCompiler glslCompiler;
+	private final int apiVersion;
 	private final DeviceInfo deviceInfo;
 	private final Vk11Queue graphicsQueue;
 	private final Vk11Queue computeQueue;
@@ -59,22 +47,20 @@ public class Vk11Device implements GpuDeviceBackend {
     private final Vk11FramebufferCache framebufferCache;
 
 	public Vk11Device(
-		final ShaderSource defaultShaderSource,
 		final Vk11Instance instance,
 		final Vk11PhysicalDevice physicalDevice,
         final VkDevice vkDevice,
 		final IntVMA vma
 	) {
-		this.defaultShaderSource = defaultShaderSource;
 		this.instance = instance;
 		this.vkDevice = vkDevice;
 		this.vmaObj = vma;
-        // The GLSL compiler doesn't call Vulkan APIs so we only care about the device version
-        this.glslCompiler = new Vk11GlslCompiler(physicalDevice.normalizedApiVersion());
         this.vma = vmaObj.ptr;
 
         Vk11PhysicalDevice.Properties properties = physicalDevice.properties();
         features = physicalDevice.features();
+
+		this.apiVersion = physicalDevice.normalizedApiVersion();
 
         if(!features.fillModeNonSolid()) ArtVK.LOGGER.warn("Device does not support fillModeNonSolid, wireframe rendering won't work");
 
@@ -91,11 +77,13 @@ public class Vk11Device implements GpuDeviceBackend {
 				properties.maxImageDimension2D(),
 				properties.maxMemoryAllocationSize(),
 				Integer.MAX_VALUE,
-				properties.maxColorAttachments()
+				properties.maxColorAttachments(),
+				Integer.MAX_VALUE
 			),
-			new DeviceFeatures(true, features.multiDraw(), false, true, true, true, true),
+			// TODO: Correctly fill actual supported features
+			new DeviceFeatures(true, features.shaderDrawParameters(), features.multiDraw(), features.multiDraw(), true, true, true, true),
 			Collections.emptySet(), // TODO: maybe implement this?
-			new HintsAndWorkarounds(false, false),
+			new HintsAndWorkarounds(false, false, false, false),
 			physicalDevice.deviceType()
 		);
 
@@ -128,13 +116,11 @@ public class Vk11Device implements GpuDeviceBackend {
 	@Override
 	public void close() {
 		this.commandEncoder.destroy();
-		this.clearPipelineCache();
         this.framebufferCache.destroy();
 		this.renderPassCache.destroy();
 		vmaObj.close();
 		VK10.vkDestroyDevice(this.vkDevice, null);
 		this.instance.close();
-		this.glslCompiler.close();
 	}
 
 	@Override
@@ -166,6 +152,10 @@ public class Vk11Device implements GpuDeviceBackend {
 		return this.vma;
 	}
 
+	public int apiVersion() {
+		return apiVersion;
+	}
+
 	public Vk11RenderPassCache renderPassCache() {
 		return this.renderPassCache;
 	}
@@ -175,8 +165,8 @@ public class Vk11Device implements GpuDeviceBackend {
     }
     
 	@Override
-	public @NotNull GpuSurfaceBackend createSurface(final long windowHandle) {
-		return new Vk11GpuSurface(this, windowHandle);
+	public @NotNull GpuSurfaceBackend createSurface(final long windowHandle, final @NotNull BooleanSupplier isIconified) {
+		return new Vk11GpuSurface(this, windowHandle, isIconified);
 	}
 
 	public @NotNull Vk11CommandEncoder createCommandEncoder() {
@@ -197,22 +187,9 @@ public class Vk11Device implements GpuDeviceBackend {
 
 	@Override
 	public @NotNull GpuTexture createTexture(
-		final @Nullable Supplier<String> label,
-		final @GpuTexture.Usage int usage,
-		final @NotNull  GpuFormat format,
-		final int width,
-		final int height,
-		final int depthOrLayers,
-		final int mipLevels
-	) {
-		return new Vk11GpuTexture(this, usage, this.isDebuggingEnabled() && label != null ? label.get() : "", format, width, height, depthOrLayers, mipLevels);
-	}
-
-	@Override
-	public @NotNull GpuTexture createTexture(
 		final @Nullable String label,
 		final @GpuTexture.Usage int usage,
-		final @NotNull GpuFormat format,
+		final @NotNull  GpuFormat format,
 		final int width,
 		final int height,
 		final int depthOrLayers,
@@ -222,15 +199,11 @@ public class Vk11Device implements GpuDeviceBackend {
 	}
 
 	@Override
-	public @NotNull GpuTextureView createTextureView(@NotNull final GpuTexture texture) {
-		return this.createTextureView(texture, 0, texture.getMipLevels());
-	}
-
-	@Override
 	public @NotNull GpuTextureView createTextureView(final @NotNull GpuTexture texture, final int baseMipLevel, final int mipLevels) {
 		return new Vk11GpuTextureView(this, (Vk11GpuTexture)texture, baseMipLevel, mipLevels);
 	}
 
+	@Override
 	public @NotNull Vk11GpuBuffer createBuffer(final @Nullable Supplier<String> label, final @GpuBuffer.Usage int usage, final long size) {
 		return new Vk11GpuBuffer.Direct(this, label, usage, size, this.isIntegratedIntelMoltenVK);
 	}
@@ -253,82 +226,9 @@ public class Vk11Device implements GpuDeviceBackend {
 	}
 
 	@Override
-	public @NotNull CompiledRenderPipeline precompilePipeline(final @NotNull RenderPipeline pipeline, final @Nullable ShaderSource customShaderSource) {
-		ShaderSource shaderSource = customShaderSource == null ? this.defaultShaderSource : customShaderSource;
-		return this.pipelineCache.computeIfAbsent(pipeline, ignored -> this.compilePipeline(pipeline, shaderSource));
-	}
-
-	protected Vk11RenderPipeline getOrCompilePipeline(final RenderPipeline pipeline) {
-		return this.pipelineCache.computeIfAbsent(pipeline, ignored -> this.compilePipeline(pipeline, this.defaultShaderSource));
-	}
-
-	protected Vk11IntermediaryShaderModule getOrCompileShader(final Identifier id, final ShaderType type, final ShaderDefines defines, final ShaderSource shaderSource) {
-		ShaderCompilationKey key = new ShaderCompilationKey(id, type, defines);
-		return this.shaderCache.computeIfAbsent(key, ignored -> this.compileShader(key, shaderSource));
-	}
-
-	private Vk11IntermediaryShaderModule compileShader(final ShaderCompilationKey key, final ShaderSource shaderSource) {
-		String source = shaderSource.get(key.id, key.type);
-		if (source == null) {
-			ArtVK.LOGGER.error("Couldn't find source for {} shader ({})", key.type, key.id);
-			return Vk11IntermediaryShaderModule.INVALID;
-		}
-
-		String sourceWithDefines = GlslPreprocessor.injectDefines(source, key.defines);
-
-		try {
-			return this.glslCompiler.createIntermediary(key.id.toDebugFileName(), sourceWithDefines, key.type);
-		} catch (ShaderCompileException e) {
-			ArtVK.LOGGER.error("Couldn't compile {} shader {}: {}", key.type, key.id, e.getMessage());
-			return Vk11IntermediaryShaderModule.INVALID;
-		}
-	}
-
-	private Vk11RenderPipeline compilePipeline(final RenderPipeline pipeline, final ShaderSource shaderSource) {
-		Vk11IntermediaryShaderModule vertexShader = this.getOrCompileShader(pipeline.getVertexShader(), ShaderType.VERTEX, pipeline.getShaderDefines(), shaderSource);
-		Vk11IntermediaryShaderModule fragmentShader = this.getOrCompileShader(
-			pipeline.getFragmentShader(), ShaderType.FRAGMENT, pipeline.getShaderDefines(), shaderSource
-		);
-		if (vertexShader == Vk11IntermediaryShaderModule.INVALID) {
-			ArtVK.LOGGER.error("Couldn't compile pipeline {}: vertex shader {} was invalid", pipeline.getLocation(), pipeline.getVertexShader());
-			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);
-		}
-
-		if (fragmentShader == Vk11IntermediaryShaderModule.INVALID) {
-			ArtVK.LOGGER.error("Couldn't compile pipeline {}: fragment shader {} was invalid", pipeline.getLocation(), pipeline.getFragmentShader());
-			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);
-		}
-
-		int pushConstantRange = Math.max(vertexShader.pushConstantRange(), fragmentShader.pushConstantRange());
-
-		try {
-			Vk11GlslCompiler.CompiledModules modules = this.glslCompiler.compile(this, pipeline, vertexShader, fragmentShader);
-            ColorTargetState[] states = pipeline.getColorTargetStates();
-            int[] colorFormats = new int[states.length];
-
-            for(int i = 0; i < states.length; i++) {
-                ColorTargetState state = states[i];
-                if(state != null) colorFormats[i] = Vk11Const.toVk(state.format());
-                else colorFormats[i] = VK10.VK_FORMAT_UNDEFINED;
-            }
-
-			int depthFormat = VK10.VK_FORMAT_D32_SFLOAT;
-			long renderPassWithDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, true, depthFormat);
-			long renderPassWithoutDepth = this.renderPassCache.getOrCreateRenderPass(colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
-			return Vk11RenderPipeline.compile(this, modules.layout(), pipeline, modules.vertex(), modules.fragment(), renderPassWithDepth, renderPassWithoutDepth, pushConstantRange);
-		} catch (ShaderCompileException e) {
-			ArtVK.LOGGER.error("Couldn't compile pipeline {}: {}", pipeline.getLocation(), e.getMessage());
-			return new Vk11RenderPipeline(pipeline, this, 0L, 0L, 0L, Vk11BindGroupLayout.INVALID_LAYOUT, null, 0L, 0L);
-		}
-	}
-
-	@Override
-	public void clearPipelineCache() {
-		this.graphicsQueue.waitIdle();
-		this.pipelineCache.values().forEach(Vk11RenderPipeline::destroy);
-		this.pipelineCache.clear();
-		this.shaderCache.values().forEach(Vk11IntermediaryShaderModule::close);
-		this.shaderCache.clear();
+	public @NotNull BackendRenderPipeline.Pending compilePipeline(final @NotNull BackendRenderPipeline.CreateInfo pipelineCreateInfo) {
+		Vk11RenderPipeline pipeline = Vk11RenderPipeline.compile(this, pipelineCreateInfo);
+		return () -> pipeline;
 	}
 
 	@Override
@@ -337,16 +237,11 @@ public class Vk11Device implements GpuDeviceBackend {
 	}
 
 	@Override
-	public long getTimestampNow() {
-		return this.commandEncoder.getTimestampNow();
-	}
-
-	@Environment(EnvType.CLIENT)
-	private record ShaderCompilationKey(Identifier id, ShaderType type, ShaderDefines defines) {
-		@Override
-		public @NotNull String toString() {
-			String string = this.id + " (" + this.type + ")";
-			return !this.defines.isEmpty() ? string + " with " + this.defines : string;
-		}
+	public long getTimestampCalibrationOffset() {
+		double timestampPeriod = this.deviceInfo.timestampPeriod();
+		long deviceTime = this.commandEncoder.getTimestampNow();
+		long hostTime = System.nanoTime();
+		long deviceTimeInNanos = timestampPeriod == 1.0 ? deviceTime : (long) (deviceTime * timestampPeriod);
+		return hostTime - deviceTimeInNanos;
 	}
 }

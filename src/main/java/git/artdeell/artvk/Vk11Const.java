@@ -1,17 +1,18 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.platform.BlendFactor;
-import com.mojang.blaze3d.platform.BlendOp;
-import com.mojang.blaze3d.platform.CompareOp;
-import com.mojang.blaze3d.platform.PolygonMode;
-import com.mojang.blaze3d.systems.GpuSurface;
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.BlendFactor;
+import com.mojang.renderpearl.api.pipeline.BlendOp;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.PolygonMode;
+import com.mojang.renderpearl.api.pipeline.ShaderType;
+import com.mojang.renderpearl.api.device.GpuSurface;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.lwjgl.vulkan.KHRSurface;
@@ -261,6 +262,13 @@ public final class Vk11Const {
 			case MAILBOX -> KHRSurface.VK_PRESENT_MODE_MAILBOX_KHR;
 			case FIFO -> KHRSurface.VK_PRESENT_MODE_FIFO_KHR;
 			case FIFO_RELAXED -> KHRSurface.VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+		};
+	}
+
+	public static int toVk(final ShaderType shaderType) {
+		return switch (shaderType) {
+			case VERTEX -> VK10.VK_SHADER_STAGE_VERTEX_BIT;
+			case FRAGMENT -> VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 		};
 	}
 }

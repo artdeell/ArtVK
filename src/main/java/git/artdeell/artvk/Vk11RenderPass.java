@@ -1,23 +1,22 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.IndexType;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.pipeline.BindGroupLayout;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.systems.GpuQueryPool;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderPassBackend;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuSampler;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import com.mojang.renderpearl.backend.api.RenderPassBackend;
+import com.mojang.renderpearl.util.TextureViewAndSampler;
+import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.function.BiConsumer;
+import java.util.List;
 import java.util.function.Supplier;
+
+import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.SharedConstants;
@@ -52,14 +51,15 @@ public class Vk11RenderPass implements RenderPassBackend {
 	private final VkCommandBuffer commandBuffer;
 	protected @Nullable Vk11RenderPipeline pipeline;
 	private boolean anyDescriptorDirty = false;
-	protected final HashMap<String, GpuBufferSlice> uniforms = new HashMap<>();
-	protected final HashMap<String, Vk11RenderPass.TextureViewAndSampler> textures = new HashMap<>();
+	// The number of uniforms a pipeline declares is only known once the pipeline is bound, so grow on demand
+	protected @Nullable Object[] uniforms = new Object[0];
+	protected @Nullable TextureViewAndSampler[] textures = new TextureViewAndSampler[0];
 
 	public Vk11RenderPass(
 		final Vk11Device device,
 		final Vk11CommandEncoder encoder,
 		final VkCommandBuffer commandBuffer,
-		final RenderPass.RenderArea renderArea,
+		final RenderPass.@Nullable RenderArea renderArea,
 		final int outputWidth,
 		final int outputHeight,
 		final boolean hasDepth,
@@ -108,55 +108,66 @@ public class Vk11RenderPass implements RenderPassBackend {
 	}
 
 	@Override
-	public void setPipeline(final @NotNull RenderPipeline pipeline) {
-		Vk11RenderPipeline newPipeline = device.getOrCompilePipeline(pipeline);
-		if (!newPipeline.isValid()) {
-			throw new IllegalStateException("Pipeline is not valid (may contain invalid shaders?)");
+	public void setPipeline(final @NotNull BackendRenderPipeline pipeline) {
+		if (!(pipeline instanceof Vk11RenderPipeline newPipeline)) {
+			throw new IllegalArgumentException("Pipeline must have been compiled by this backend");
+		}
+
+		if (newPipeline.isClosed()) {
+			throw new IllegalStateException("Pipeline is closed");
 		}
 
 		if (this.pipeline != newPipeline) {
 			this.pipeline = newPipeline;
+			// The frontend replays every uniform after setPipeline, but a stale binding from a previous
+			// pipeline would otherwise survive, so start from a clean slate
+			this.uniforms = new @Nullable Object[newPipeline.layout().entries().size()];
+			this.textures = new @Nullable TextureViewAndSampler[newPipeline.layout().entries().size()];
 			anyDescriptorDirty = true;
 			VK10.vkCmdBindPipeline(commandBuffer(), 0, hasDepth ? this.pipeline.withDepthPipeline() : this.pipeline.withoutDepthPipeline());
 		}
 	}
 
 	@Override
-	public void bindTexture(final @NotNull String name, final @Nullable GpuTextureView textureView, final @Nullable GpuSampler sampler) {
-		if (textureView != null && sampler != null) {
-			Vk11RenderPass.TextureViewAndSampler newValue = new Vk11RenderPass.TextureViewAndSampler((Vk11GpuTextureView)textureView, (Vk11GpuSampler)sampler);
-			Vk11RenderPass.TextureViewAndSampler oldValue = textures.get(name);
-			if (oldValue == null || oldValue.view() != newValue.view() || oldValue.sampler() != newValue.sampler()) {
-				textures.put(name, newValue);
-				anyDescriptorDirty = true;
-			}
-		} else if (textureView == null && sampler == null) {
-			if (textures.remove(name) != null) {
-				anyDescriptorDirty = true;
-			}
-		} else {
-			throw new IllegalArgumentException();
+	public void pushConstants(final ByteBuffer value) {
+		if (this.pipeline == null) {
+			throw new IllegalStateException("Must bind pipeline before pushing constants");
 		}
+
+		VK10.vkCmdPushConstants(commandBuffer(), this.pipeline.pipelineLayout(), VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT, 0, value);
 	}
 
 	@Override
-	public void setUniform(final @NotNull String name, final GpuBuffer value) {
-		GpuBufferSlice newSlice = value.slice();
-		GpuBufferSlice oldSlice = uniforms.get(name);
-		if (oldSlice == null || oldSlice.buffer() != newSlice.buffer() || oldSlice.offset() != newSlice.offset() || oldSlice.length() != newSlice.length()) {
-			uniforms.put(name, newSlice);
-			anyDescriptorDirty = true;
-		}
-	}
+	public void setUniform(final int index, final @Nullable Object value) {
+		// This was reworked and can cause bugs
+        switch (value) {
+            case null -> {
+                if (uniforms[index] != null || textures[index] != null) {
+                    uniforms[index] = null;
+                    textures[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            case GpuBufferSlice slice -> {
+                GpuBufferSlice oldSlice = (GpuBufferSlice) uniforms[index];
+                if (oldSlice == null || oldSlice.buffer() != slice.buffer() || oldSlice.offset() != slice.offset() || oldSlice.length() != slice.length()) {
+                    uniforms[index] = slice;
+                    textures[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            case TextureViewAndSampler pair -> {
+                TextureViewAndSampler oldValue = textures[index];
+                if (oldValue == null || oldValue.view() != pair.view() || oldValue.sampler() != pair.sampler()) {
+                    textures[index] = pair;
+                    uniforms[index] = null;
+                    anyDescriptorDirty = true;
+                }
+            }
+            default -> throw new IllegalArgumentException("Unsupported uniform value type " + value.getClass().getName());
+        }
 
-	@Override
-	public void setUniform(final @NotNull String name, final @NotNull GpuBufferSlice value) {
-		GpuBufferSlice oldSlice = uniforms.get(name);
-		if (oldSlice == null || oldSlice.buffer() != value.buffer() || oldSlice.offset() != value.offset() || oldSlice.length() != value.length()) {
-			uniforms.put(name, value);
-			anyDescriptorDirty = true;
-		}
-	}
+    }
 
 	@Override
 	public void enableScissor(final int x, final int y, final int width, final int height) {
@@ -183,9 +194,14 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void setVertexBuffer(final int slot, final @Nullable GpuBufferSlice vertexBuffer) {
+		if(vertexBuffer == null) {
+			// The game now sends null vertex buffer sometimes, as we don't support nullDescriptor we'll just ignore the binding. Sadly
+			// This is also something that the official backend does.
+			return;
+		}
 		try (MemoryStack stack = MemoryStack.stackPush()) {
-			long buffer = vertexBuffer != null ? ((Vk11GpuBuffer)vertexBuffer.buffer()).vkBuffer() : 0L;
-			long offset = vertexBuffer != null ? vertexBuffer.offset() : 0L;
+			long buffer = ((Vk11GpuBuffer)vertexBuffer.buffer()).vkBuffer();
+			long offset = vertexBuffer.offset();
 			VK10.vkCmdBindVertexBuffers(commandBuffer(), slot, stack.longs(buffer), stack.longs(offset));
 		}
 	}
@@ -201,7 +217,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void drawIndexed(final int indexCount, final int instanceCount, final int firstIndex, final int vertexOffset, final int firstInstance) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
             pushDescriptors();
 			VK10.vkCmdDrawIndexed(commandBuffer(), indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
 		} else {
@@ -211,7 +227,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void multiDrawIndexed(final @NotNull IntBuffer drawParameters, final int instanceCount, final int firstInstance, final int drawCount) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
             pushDescriptors();
 			EXTMultiDraw.nvkCmdDrawMultiIndexedEXT(
 				commandBuffer(), drawCount, MemoryUtil.memAddress(drawParameters), instanceCount, firstInstance, VkMultiDrawIndexedInfoEXT.SIZEOF, 0L
@@ -228,7 +244,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void drawIndexedIndirect(final @NotNull GpuBufferSlice commands, final int drawCount) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
             pushDescriptors();
 			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
 			if(device.features.multiDrawIndirect())
@@ -249,30 +265,8 @@ public class Vk11RenderPass implements RenderPassBackend {
 	}
 
 	@Override
-	public <T> void drawMultipleIndexed(
-		final Collection<RenderPass.Draw<@NotNull T>> draws,
-		final @Nullable GpuBuffer defaultIndexBuffer,
-		final @Nullable IndexType defaultIndexType,
-		final @NotNull Collection<String> dynamicUniforms,
-		final T uniformArgument
-	) {
-		for (RenderPass.Draw<@NotNull T> draw : draws) {
-			BiConsumer<T, RenderPass.UniformUploader> uniformUploaderConsumer = draw.uniformUploaderConsumer();
-			if (uniformUploaderConsumer != null) {
-				uniformUploaderConsumer.accept(uniformArgument, this::setUniform);
-			}
-
-			assert draw.indexBuffer() != null || defaultIndexBuffer != null;
-			assert draw.indexType() != null || defaultIndexType != null;
-			setIndexBuffer(draw.indexBuffer() == null ? defaultIndexBuffer : draw.indexBuffer(), draw.indexType() == null ? defaultIndexType : draw.indexType());
-			setVertexBuffer(draw.slot(), draw.vertexBuffer().slice());
-			drawIndexed(draw.indexCount(), 1, draw.firstIndex(), draw.baseVertex(), 0);
-		}
-	}
-
-	@Override
 	public void draw(final int vertexCount, final int instanceCount, final int firstVertex, final int firstInstance) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
             pushDescriptors();
 			VK10.vkCmdDraw(commandBuffer(), vertexCount, instanceCount, firstVertex, firstInstance);
 		}
@@ -280,7 +274,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void multiDraw(final @NotNull IntBuffer drawParameters, final int instanceCount, final int firstInstance, final int drawCount) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
             pushDescriptors();
 			EXTMultiDraw.nvkCmdDrawMultiEXT(
 				commandBuffer(), drawCount, MemoryUtil.memAddress(drawParameters), instanceCount, firstInstance, VkMultiDrawInfoEXT.SIZEOF
@@ -297,7 +291,7 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	@Override
 	public void drawIndirect(final @NotNull GpuBufferSlice commands, final int drawCount) {
-		if (pipeline != null && pipeline.isValid()) {
+		if (pipeline != null && !pipeline.isClosed()) {
 			pushDescriptors();
 			long buf = ((Vk11GpuBuffer)commands.buffer()).vkBuffer();
 			if(device.features.multiDrawIndirect())
@@ -318,8 +312,11 @@ public class Vk11RenderPass implements RenderPassBackend {
         if(!anyDescriptorDirty) return;
         
         if (VALIDATION) {
-            for (BindGroupLayout.UniformDescription uniform : BindGroupLayout.flattenUniforms(pipeline.info().getBindGroupLayouts())) {
-                GpuBufferSlice value = uniforms.get(uniform.name());
+            List<BindGroupLayout.UniformDescription> declaredUniforms = pipeline.layout().entries();
+
+            for (int i = 0; i < declaredUniforms.size(); i++) {
+                BindGroupLayout.UniformDescription uniform = declaredUniforms.get(i);
+                GpuBufferSlice value = (GpuBufferSlice) uniforms[i];
                 if (value == null) {
                     throw new IllegalStateException("Missing uniform " + uniform.name() + " (should be " + uniform.type() + ")");
                 }
@@ -361,36 +358,36 @@ public class Vk11RenderPass implements RenderPassBackend {
                 Vk11DescriptorPool.DescriptorSetAlloc update = pool.allocateSet(stack, numEntries, frameIndex)
         ) {
             for (int i = 0; i < numEntries; i++) {
-                Vk11BindGroupLayout.Entry entry = layout.entries().get(i);
+                BindGroupLayout.UniformDescription entry = layout.entries().get(i);
                 switch (entry.type()) {
                     case UNIFORM_BUFFER -> {
-                        GpuBufferSlice buffer = uniforms.get(entry.name());
+                        GpuBufferSlice buffer = (GpuBufferSlice) uniforms[i];
                         if (buffer == null) {
                             throw new IllegalStateException("Missing uniform " + entry.name() + " (should be " + entry.type() + ")");
                         }
                         update.addUniformBuffer(i, ((Vk11GpuBuffer)buffer.buffer()).vkBuffer(), buffer.offset(), buffer.length());
                     }
-                    case SAMPLED_IMAGE -> {
-                        Vk11RenderPass.TextureViewAndSampler value = textures.get(entry.name());
+                    case COMBINED_IMAGE_SAMPLER -> {
+                        TextureViewAndSampler value = textures[i];
                         if (value == null) {
                             throw new IllegalStateException("Missing sampler " + entry.name());
                         }
-                        update.addSampledImage(i, value.view.vkImageView(), value.sampler.vkSampler());
+                        update.addSampledImage(i, ((Vk11GpuTextureView)value.view()).vkImageView(), ((Vk11GpuSampler)value.sampler()).vkSampler());
                     }
                     case TEXEL_BUFFER -> {
-                        GpuBufferSlice value = uniforms.get(entry.name());
+                        GpuBufferSlice value = (GpuBufferSlice) uniforms[i];
                         if (value == null) {
                             throw new IllegalStateException("Missing uniform " + entry.name() + " (should be " + entry.type() + ")");
                         }
 
                         LongBuffer bufferViewPtr = stack.callocLong(1);
                         try (MemoryStack innerStack = stack.push()) {
-                            assert entry.texelBufferFormat() != null;
+                            assert entry.gpuFormat() != null;
                             VkBufferViewCreateInfo viewCreateInfo = VkBufferViewCreateInfo.calloc(innerStack).sType$Default();
                             viewCreateInfo.buffer(((Vk11GpuBuffer)value.buffer()).vkBuffer());
                             viewCreateInfo.offset(value.offset());
                             viewCreateInfo.range(value.length());
-                            viewCreateInfo.format(Vk11Const.toVk(entry.texelBufferFormat()));
+                            viewCreateInfo.format(Vk11Const.toVk(entry.gpuFormat()));
                             Vk11Utils.crashIfFailure(
                                     VK10.vkCreateBufferView(device.vkDevice(), viewCreateInfo, null, bufferViewPtr), "Couldn't create buffer view for texel buffer"
                             );
@@ -416,10 +413,6 @@ public class Vk11RenderPass implements RenderPassBackend {
 
 	public Supplier<String> getLabel() {
 		return label;
-	}
-
-	@Environment(EnvType.CLIENT)
-	protected record TextureViewAndSampler(Vk11GpuTextureView view, Vk11GpuSampler sampler) {
 	}
 
 	public VkCommandBuffer getCommandBuffer(){

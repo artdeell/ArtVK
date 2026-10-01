@@ -1,8 +1,8 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.textures.AddressMode;
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.AddressMode;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
 import java.nio.LongBuffer;
 import java.util.OptionalDouble;
 import net.fabricmc.api.EnvType;
@@ -13,7 +13,7 @@ import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkSamplerCreateInfo;
 
 @Environment(EnvType.CLIENT)
-public class Vk11GpuSampler extends GpuSampler implements Destroyable {
+public class Vk11GpuSampler implements GpuSampler, Destroyable {
 	private final long vkSampler;
 	private final Vk11Device device;
 	private final AddressMode addressModeU;
@@ -73,6 +73,11 @@ public class Vk11GpuSampler extends GpuSampler implements Destroyable {
 			this.closed = true;
 			this.device.createCommandEncoder().queueForDestroy(this);
 		}
+	}
+
+	@Override
+	public boolean isClosed() {
+		return this.closed;
 	}
 
 	@Override

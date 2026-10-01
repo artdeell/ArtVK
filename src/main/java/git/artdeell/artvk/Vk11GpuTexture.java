@@ -1,7 +1,8 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.GpuFormat;
-import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.backend.common.BaseGpuTexture;
 import java.nio.LongBuffer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -13,7 +14,7 @@ import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer;
 
 @Environment(EnvType.CLIENT)
-public class Vk11GpuTexture extends GpuTexture implements Destroyable {
+public class Vk11GpuTexture extends BaseGpuTexture implements Destroyable {
 	private final Vk11Device device;
 	private final long vkImage;
 	private final long vmaAllocation;

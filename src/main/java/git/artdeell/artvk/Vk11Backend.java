@@ -1,27 +1,28 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.GLFWErrorCapture;
 import com.mojang.blaze3d.platform.NativeLibrariesBootstrap;
-import com.mojang.blaze3d.shaders.GpuDebugOptions;
-import com.mojang.blaze3d.shaders.ShaderSource;
-import com.mojang.blaze3d.systems.BackendCreationException;
-import com.mojang.blaze3d.systems.GpuBackend;
-import com.mojang.blaze3d.systems.GpuDevice;
+import com.mojang.renderpearl.api.device.BackendCreationException;
+import com.mojang.renderpearl.api.device.GpuBackend;
+import com.mojang.renderpearl.api.device.GpuDebugOptions;
+import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.frontend.FrontendGpuDevice;
 import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap.Entry;
 
 import java.nio.IntBuffer;
-import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jetbrains.annotations.NotNull;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.glfw.GLFW;
-import org.lwjgl.glfw.GLFWVulkan;
+import org.lwjgl.sdl.SDLError;
+import org.lwjgl.sdl.SDLVideo;
+import org.lwjgl.sdl.SDLVulkan;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.SharedLibrary;
 import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo.Buffer;
 
@@ -32,39 +33,62 @@ public class Vk11Backend implements GpuBackend {
 		"VK_KHR_swapchain"
 	);
 
+    private boolean libraryLoaded;
+    private @Nullable BackendCreationException libraryLoadFailure;
+
 	@Override
 	public @NotNull String getName() {
 		return NAME;
     }
 
 	@Override
-	public void setWindowHints() {
-		GLFW.glfwWindowHint(GLFW.GLFW_CLIENT_API, GLFW.GLFW_NO_API);
-	}
+	public void loadLibrary() throws BackendCreationException {
+		if (!this.libraryLoaded) {
+			if (this.libraryLoadFailure != null) {
+				throw this.libraryLoadFailure;
+			}
 
-	@Override
-	public void handleWindowCreationErrors(final GLFWErrorCapture.@Nullable Error error) throws BackendCreationException {
-		if (error != null) {
-			throw new BackendCreationException(String.format(Locale.ROOT, "GLFW_ERROR: 0x%X", error.error()), BackendCreationException.Reason.GLFW_ERROR);
-		} else {
-			throw new BackendCreationException("Failed to create window for Vulkan", BackendCreationException.Reason.GLFW_ERROR);
+			if (!NativeLibrariesBootstrap.isVulkanLoaderAvailable()) {
+				this.libraryLoadFailure = new BackendCreationException("Vulkan loader library is missing", BackendCreationException.Reason.VULKAN_LOADER_MISSING);
+				throw this.libraryLoadFailure;
+			}
+
+			if (!SDLVulkan.SDL_Vulkan_LoadLibrary(((SharedLibrary) VK.getFunctionProvider()).getPath())) {
+				this.libraryLoadFailure = new BackendCreationException(
+					"Vulkan is not supported: " + Objects.requireNonNullElse(SDLError.SDL_GetError(), "<no error>"), BackendCreationException.Reason.PLATFORM_ERROR
+				);
+				throw this.libraryLoadFailure;
+			}
+
+			if (VK.getFunctionProvider().getFunctionAddress("vkGetInstanceProcAddr") != SDLVulkan.SDL_Vulkan_GetVkGetInstanceProcAddr()) {
+				this.libraryLoadFailure = new BackendCreationException("vkGetInstanceProcAddr mismatch", BackendCreationException.Reason.PLATFORM_ERROR);
+				SDLVulkan.SDL_Vulkan_UnloadLibrary();
+				throw this.libraryLoadFailure;
+			}
+
+			this.libraryLoaded = true;
 		}
 	}
 
 	@Override
-	public @NotNull GpuDevice createDevice(
-            final long window,
-            final @NotNull ShaderSource defaultShaderSource,
-            final @NotNull GpuDebugOptions debugOptions,
-            final @NotNull Runnable criticalShaderLoader
-	) throws BackendCreationException {
+	public void unloadLibrary() {
+		if (this.libraryLoaded) {
+			SDLVulkan.SDL_Vulkan_UnloadLibrary();
+			this.libraryLoaded = false;
+		}
+	}
+
+	@Override
+	public long createWindow(final @Nullable String title, final int width, final int height, final long flags) {
+		return SDLVideo.SDL_CreateWindow(title, width, height, 268435456L | flags);
+	}
+
+	@Override
+	public @NotNull GpuDevice createDevice(final @NotNull GpuDebugOptions debugOptions) throws BackendCreationException {
 		if (!NativeLibrariesBootstrap.isVulkanLoaderAvailable()) {
 			throw new BackendCreationException("Vulkan loader library is missing", BackendCreationException.Reason.VULKAN_LOADER_MISSING);
 		}
 
-		if (!GLFWVulkan.glfwVulkanSupported()) {
-			throw new BackendCreationException("Vulkan is not supported", BackendCreationException.Reason.GLFW_ERROR);
-		}
 		Vk11Instance instance = null;
 		Vk11PhysicalDevice physicalDevice = null;
 		VkDevice device = null;
@@ -94,8 +118,8 @@ public class Vk11Backend implements GpuBackend {
 			throw e;
 		}
 
-		return new GpuDevice(
-			new Vk11Device(defaultShaderSource, instance, physicalDevice, device, vma), criticalShaderLoader
+		return new FrontendGpuDevice(
+			new Vk11Device(instance, physicalDevice, device, vma)
 		);
 	}
 

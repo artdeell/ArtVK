@@ -1,11 +1,11 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.UniformType;
 import java.nio.LongBuffer;
 import java.util.List;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding;
@@ -13,18 +13,20 @@ import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo;
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding.Buffer;
 
 @Environment(EnvType.CLIENT)
-public record Vk11BindGroupLayout(long handle, List<Vk11BindGroupLayout.Entry> entries) {
+public record Vk11BindGroupLayout(long handle, List<BindGroupLayout.UniformDescription> entries) {
 	public static final Vk11BindGroupLayout INVALID_LAYOUT = new Vk11BindGroupLayout(0L, List.of());
 
-	public static Vk11BindGroupLayout create(final Vk11Device device, final List<Vk11BindGroupLayout.Entry> entries, final String name) {
+	public static Vk11BindGroupLayout create(final Vk11Device device, final List<BindGroupLayout.UniformDescription> entries, final String name) {
 		long layoutHandle;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			Buffer bindings = VkDescriptorSetLayoutBinding.calloc(entries.size(), stack);
 
+			// The frontend assigns descriptor bindings by their position in this list, so the layout
+			// binding index has to match the uniform index handed to RenderPassBackend#setUniform
 			for (int i = 0; i < entries.size(); i++) {
 				VkDescriptorSetLayoutBinding binding = VkDescriptorSetLayoutBinding.calloc(stack).descriptorType(switch (entries.get(i).type()) {
 					case UNIFORM_BUFFER -> VK10.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-					case SAMPLED_IMAGE -> VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+					case COMBINED_IMAGE_SAMPLER -> VK10.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 					case TEXEL_BUFFER -> VK10.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
 				}).descriptorCount(1).binding(i).stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT);
 				bindings.put(binding);
@@ -40,14 +42,15 @@ public record Vk11BindGroupLayout(long handle, List<Vk11BindGroupLayout.Entry> e
 		return new Vk11BindGroupLayout(layoutHandle, entries);
 	}
 
-	@Environment(EnvType.CLIENT)
-	public record Entry(Vk11BindGroupLayout.Vk11BindGroupEntryType type, String name, @Nullable GpuFormat texelBufferFormat) {
-	}
+	public static int countOfType(final List<BindGroupLayout.UniformDescription> entries, final UniformType type) {
+		int count = 0;
 
-	@Environment(EnvType.CLIENT)
-	public enum Vk11BindGroupEntryType {
-		UNIFORM_BUFFER,
-		SAMPLED_IMAGE,
-		TEXEL_BUFFER
+		for (BindGroupLayout.UniformDescription entry : entries) {
+			if (entry.type() == type) {
+				count++;
+			}
+		}
+
+		return count;
 	}
 }

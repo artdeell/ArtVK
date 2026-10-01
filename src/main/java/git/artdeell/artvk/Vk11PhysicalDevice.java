@@ -1,7 +1,7 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.BackendCreationException;
-import com.mojang.blaze3d.systems.DeviceType;
+import com.mojang.renderpearl.api.device.BackendCreationException;
+import com.mojang.renderpearl.api.device.DeviceType;
 import git.artdeell.ArtVK;
 import it.unimi.dsi.fastutil.ints.Int2IntArrayMap;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
@@ -16,7 +16,7 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.glfw.GLFWVulkan;
+import org.lwjgl.sdl.SDLVulkan;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkExtensionProperties.Buffer;
@@ -84,7 +84,7 @@ public class Vk11PhysicalDevice implements AutoCloseable {
 				VkQueueFamilyProperties queueFamilyProperties = vkQueueFamilyProps.get(i);
 				if (graphicsQueueFamily == -1
 					&& Vk11Utils.hasAllBits(queueFamilyProperties.queueFlags(), VK10.VK_QUEUE_GRAPHICS_BIT | VK10.VK_QUEUE_COMPUTE_BIT)
-					&& GLFWVulkan.glfwGetPhysicalDevicePresentationSupport(vkPhysicalDevice.getInstance(), vkPhysicalDevice, i)) {
+					&& SDLVulkan.SDL_Vulkan_GetPresentationSupport(vkPhysicalDevice.getInstance(), vkPhysicalDevice, i)) {
 					graphicsQueueFamily = i;
 					familyUsedQueues++;
 				}

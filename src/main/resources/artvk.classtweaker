@@ -1,3 +1,5 @@
 classTweaker  v1  official
 accessible field net/minecraft/client/OptionInstance values Lnet/minecraft/client/OptionInstance$ValueSet;
 mutable field net/minecraft/client/OptionInstance values Lnet/minecraft/client/OptionInstance$ValueSet;
+
+accessible field com/mojang/renderpearl/frontend/FrontendGpuDevice backend Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;

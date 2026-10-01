@@ -1,234 +1,360 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.pipeline.BlendFunction;
-import com.mojang.blaze3d.pipeline.ColorTargetState;
-import com.mojang.blaze3d.pipeline.CompiledRenderPipeline;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.vertex.VertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
+import com.mojang.renderpearl.api.pipeline.BlendFunction;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongList;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
+import java.util.List;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import org.jspecify.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
 import org.lwjgl.vulkan.VkPipelineShaderStageCreateInfo.Buffer;
 
 @Environment(EnvType.CLIENT)
-public record Vk11RenderPipeline(
-	RenderPipeline info,
-	Vk11Device device,
-	long withDepthPipeline,
-	long withoutDepthPipeline,
-	long pipelineLayout,
-	Vk11BindGroupLayout layout,
-	Vk11DescriptorPool descriptorPool,
-	long vertexModule,
-	long fragmentModule
-) implements CompiledRenderPipeline, Destroyable {
+public class Vk11RenderPipeline implements BackendRenderPipeline, Destroyable {
 	public static final long INVALID_PIPELINE = 0L;
 
-	@Override
-	public boolean isValid() {
-		return this.withDepthPipeline != 0L;
+	private final Vk11Device device;
+	private final long withDepthPipeline;
+	private final long withoutDepthPipeline;
+	private final long pipelineLayout;
+	private final Vk11BindGroupLayout layout;
+	// Created on demand, see descriptorPool()
+	private @Nullable Vk11DescriptorPool descriptorPool;
+	private final LongList shaderModules;
+	private boolean closed = false;
+
+	public Vk11RenderPipeline(
+		final Vk11Device device,
+		final long withDepthPipeline,
+		final long withoutDepthPipeline,
+		final long pipelineLayout,
+		final Vk11BindGroupLayout layout,
+		final LongList shaderModules
+	) {
+		this.device = device;
+		this.withDepthPipeline = withDepthPipeline;
+		this.withoutDepthPipeline = withoutDepthPipeline;
+		this.pipelineLayout = pipelineLayout;
+		this.layout = layout;
+		this.shaderModules = shaderModules;
 	}
 
-	public static Vk11RenderPipeline compile(
-		final Vk11Device device, final Vk11BindGroupLayout layout, final RenderPipeline pipeline, final long vertexModule, final long fragmentModule,
-		final long vkRenderPassWithDepth, final long vkRenderPassWithoutDepth, final int pushConstantRange
-	) {
-		long pipelineLayout;
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
-					.sType$Default()
-					.pSetLayouts(stack.longs(layout.handle()));
-			if(pushConstantRange > 0){
-				VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack)
-						.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
-						.offset(0)
-						.size(pushConstantRange);
-				createInfo.pPushConstantRanges(range);
-			}
-			LongBuffer pointer = stack.callocLong(1);
-			Vk11Utils.crashIfFailure(
-                    VK10.vkCreatePipelineLayout(device.vkDevice(), createInfo, null, pointer), "Can't create pipeline for " + pipeline.getLocation()
-			);
-			pipelineLayout = pointer.get(0);
-			device.instance().debug().setObjectName(device.vkDevice(), VK10.VK_OBJECT_TYPE_PIPELINE_LAYOUT, pipelineLayout, () -> "Pipeline layout for " + pipeline.getLocation());
+	public long withDepthPipeline() {
+		return this.withDepthPipeline;
+	}
+
+	public long withoutDepthPipeline() {
+		return this.withoutDepthPipeline;
+	}
+
+	public long pipelineLayout() {
+		return this.pipelineLayout;
+	}
+
+	public Vk11BindGroupLayout layout() {
+		return this.layout;
+	}
+
+	public Vk11DescriptorPool descriptorPool() {
+		// TODO: XXX ABI BREAKAGE - compile() runs on Util.backgroundExecutor(), but this pool preallocates three
+		// times SETS_PER_FRAME descriptor sets and registers itself with the command encoder, which only belongs
+		// on the render thread. Build it on first use, exactly where 26.2 built it.
+		Vk11DescriptorPool pool = this.descriptorPool;
+
+		if (pool == null) {
+			pool = new Vk11DescriptorPool(this.device, this.device.createCommandEncoder(), this.layout);
+			this.descriptorPool = pool;
 		}
 
-		Vk11DescriptorPool descriptorPool = new Vk11DescriptorPool(device, device.createCommandEncoder(), layout);
+		return pool;
+	}
 
-		try (MemoryStack stack = MemoryStack.stackPush()) {
-			Buffer shaderStages = VkPipelineShaderStageCreateInfo.calloc(2, stack);
-			ByteBuffer nameMain = stack.UTF8("main");
-			VkPipelineShaderStageCreateInfo vertexStage = VkPipelineShaderStageCreateInfo.calloc(stack).sType$Default().stage(VK10.VK_SHADER_STAGE_VERTEX_BIT).module(vertexModule).pName(nameMain);
-			VkPipelineShaderStageCreateInfo fragmentStage = VkPipelineShaderStageCreateInfo.calloc(stack)
-				.sType$Default()
-				.stage(VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
-				.module(fragmentModule)
-				.pName(nameMain);
-			shaderStages.put(vertexStage).put(fragmentStage).flip();
-			VertexFormat[] vertexBindings = pipeline.getVertexFormatBindings();
-			org.lwjgl.vulkan.VkVertexInputAttributeDescription.Buffer vertexAttributeDescriptions = VkVertexInputAttributeDescription.calloc(
-				vertexBindings.length, stack
-			);
-			org.lwjgl.vulkan.VkVertexInputBindingDescription.Buffer vertexBindingDescriptions = VkVertexInputBindingDescription.calloc(vertexBindings.length, stack);
-			org.lwjgl.vulkan.VkVertexInputBindingDivisorDescriptionEXT.Buffer vertexBindingDivisorDescriptions = VkVertexInputBindingDivisorDescriptionEXT.calloc(
-				vertexBindings.length, stack
-			);
-			int attribLocation = 0;
+	@Override
+	public boolean isClosed() {
+		return this.closed;
+	}
 
-			for (int i = 0; i < vertexBindings.length; i++) {
-				VertexFormat bindings = vertexBindings[i];
-				if(bindings == null) continue;
+	@Override
+	public void close() {
+		if (!this.closed) {
+			this.closed = true;
+			this.destroy();
+		}
+	}
 
+	public static Vk11RenderPipeline compile(final Vk11Device device, final BackendRenderPipeline.CreateInfo info) {
+		// TODO: XXX ABI BREAKAGE - shader modules now arrive as ready SPIR-V from the frontend pipeline
+		// builder, so this backend no longer rebinds descriptor sets/vertex locations itself and instead
+		// trusts the binding indices the frontend already assigned.
+		String pipelineName = info.name();
+		List<BindGroupLayout.UniformDescription> uniforms = info.uniforms();
+		List<@Nullable ColorTargetState> colorTargetStates = info.colorTargetStates();
 
-                VkVertexInputBindingDescription bindingDescription = VkVertexInputBindingDescription.calloc(stack)
-                        .binding(i)
-                        .stride(bindings.getVertexSize())
-                        .inputRate(bindings.getStepRate() > 0 ? VK10.VK_VERTEX_INPUT_RATE_INSTANCE : VK10.VK_VERTEX_INPUT_RATE_VERTEX);
-                vertexBindingDescriptions.put(bindingDescription);
+		Vk11BindGroupLayout layout = Vk11BindGroupLayout.create(device, uniforms, pipelineName);
+		LongList shaderModules = new LongArrayList();
+		long pipelineLayout;
+		long withDepthPipeline = 0L;
+		long withoutDepthPipeline = 0L;
 
-                if (bindings.getStepRate() > 0) {
-                    if(device.features.vertexAttributeDivisor()) {
-                        VkVertexInputBindingDivisorDescriptionEXT divisorBinding = VkVertexInputBindingDivisorDescriptionEXT.calloc(stack)
-                                .binding(i)
-                                .divisor(bindings.getStepRate());
-                        vertexBindingDivisorDescriptions.put(divisorBinding);
-                    } else if (bindings.getStepRate() > 1) {
-                        throw new IllegalStateException("Device does not support instance attribute divisor above 1");
-                    }
-                }
+		try {
+			pipelineLayout = createPipelineLayout(device, layout, info.pushConstantsSize(), pipelineName);
 
-                for (VertexFormatElement element : bindings.getElements()) {
-                    VkVertexInputAttributeDescription attributeDescription = VkVertexInputAttributeDescription.calloc(stack)
-                            .location(attribLocation)
-                            .binding(i)
-                            .offset(element.offset())
-                            .format(Vk11Const.toVk(element.format()));
-                    vertexAttributeDescriptions.put(attributeDescription);
-                    attribLocation++;
-                }
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				Buffer shaderStages = VkPipelineShaderStageCreateInfo.calloc(info.shaders().size(), stack);
+
+				for (BackendRenderPipeline.CreateInfo.Shader shader : info.shaders()) {
+					long module = createShaderModule(device, shader, pipelineName);
+					shaderModules.add(module);
+					shaderStages.put(
+						VkPipelineShaderStageCreateInfo.calloc(stack)
+							.sType$Default()
+							.stage(Vk11Const.toVk(shader.module().type()))
+							.module(module)
+							.pName(stack.UTF8(shader.entryPoint()))
+					);
+				}
+
+				shaderStages.flip();
+				org.lwjgl.vulkan.VkPipelineVertexInputStateCreateInfo vertexInputState = createVertexInputState(device, stack, info);
+				VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.topology(Vk11Const.toVk(info.primitiveTopology()));
+
+				int polygonMode = device.features.fillModeNonSolid() ? Vk11Const.toVk(info.polygonMode()) : VK10.VK_POLYGON_MODE_FILL;
+				VkPipelineRasterizationStateCreateInfo rasterizationState = VkPipelineRasterizationStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.polygonMode(polygonMode)
+					.cullMode(info.cull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE)
+					.frontFace(VK10.VK_FRONT_FACE_CLOCKWISE)
+					.lineWidth(1.0F);
+				VkPipelineDepthStencilStateCreateInfo depthStencilState = VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default();
+
+				if (info.depthStencilState() != null) {
+					rasterizationState.depthBiasEnable(
+						info.depthStencilState().depthBiasConstant() != 0.0F && info.depthStencilState().depthBiasScaleFactor() != 0.0F
+					);
+					rasterizationState.depthBiasConstantFactor(info.depthStencilState().depthBiasConstant());
+					rasterizationState.depthBiasSlopeFactor(info.depthStencilState().depthBiasScaleFactor());
+					depthStencilState.depthTestEnable(true);
+					depthStencilState.depthWriteEnable(info.depthStencilState().writeDepth());
+					depthStencilState.depthCompareOp(Vk11Const.toVk(info.depthStencilState().depthTest()));
+				}
+
+				org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState.Buffer blendAttachments =
+					VkPipelineColorBlendAttachmentState.calloc(colorTargetStates.size(), stack);
+
+				for (@Nullable ColorTargetState colorTargetState : colorTargetStates) {
+					blendAttachments.colorWriteMask(colorTargetState != null ? Vk11Const.toVk(colorTargetState) : 0);
+
+					if (colorTargetState != null && colorTargetState.blendFunction().isPresent()) {
+						applyBlendInformation(blendAttachments, colorTargetState.blendFunction().get());
+					}
+
+					blendAttachments.position(blendAttachments.position() + 1);
+				}
+
+				blendAttachments.position(0);
+				VkPipelineColorBlendStateCreateInfo colorBlendState = VkPipelineColorBlendStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.pAttachments(blendAttachments);
+				VkPipelineMultisampleStateCreateInfo multisampleState = VkPipelineMultisampleStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.rasterizationSamples(VK10.VK_SAMPLE_COUNT_1_BIT);
+				VkPipelineDynamicStateCreateInfo dynamicState = VkPipelineDynamicStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.pDynamicStates(stack.ints(VK10.VK_DYNAMIC_STATE_VIEWPORT, VK10.VK_DYNAMIC_STATE_SCISSOR));
+				VkPipelineViewportStateCreateInfo viewportState = VkPipelineViewportStateCreateInfo.calloc(stack)
+					.sType$Default()
+					.viewportCount(1)
+					.scissorCount(1);
+
+				int[] colorFormats = new int[colorTargetStates.size()];
+
+				for (int i = 0; i < colorTargetStates.size(); i++) {
+					@Nullable ColorTargetState state = colorTargetStates.get(i);
+					colorFormats[i] = state != null ? Vk11Const.toVk(state.format()) : VK10.VK_FORMAT_UNDEFINED;
+				}
+
+				int depthFormat = VK10.VK_FORMAT_D32_SFLOAT;
+				long renderPassWithDepth = device.renderPassCache().getOrCreateRenderPass(colorFormats, true, depthFormat);
+				long renderPassWithoutDepth = device.renderPassCache().getOrCreateRenderPass(colorFormats, false, VK10.VK_FORMAT_UNDEFINED);
+				withDepthPipeline = createGraphicsPipeline(
+					device, stack, pipelineName, shaderStages, vertexInputState, inputAssemblyState, rasterizationState, depthStencilState,
+					colorBlendState, multisampleState, dynamicState, viewportState, pipelineLayout, renderPassWithDepth, "with depth"
+				);
+
+				// The without-depth variant disables depth testing entirely, matching the render pass it is built against
+				depthStencilState.depthTestEnable(false);
+				depthStencilState.depthWriteEnable(false);
+				withoutDepthPipeline = createGraphicsPipeline(
+					device, stack, pipelineName, shaderStages, vertexInputState, inputAssemblyState, rasterizationState, depthStencilState,
+					colorBlendState, multisampleState, dynamicState, viewportState, pipelineLayout, renderPassWithoutDepth, "without depth"
+				);
+			}
+		} catch (RuntimeException | Error e) {
+			for (long module : shaderModules) {
+				VK10.vkDestroyShaderModule(device.vkDevice(), module, null);
 			}
 
-			vertexAttributeDescriptions.flip();
-			vertexBindingDescriptions.flip();
-			vertexBindingDivisorDescriptions.flip();
+			VK10.vkDestroyDescriptorSetLayout(device.vkDevice(), layout.handle(), null);
+			throw e;
+		}
+
+		return new Vk11RenderPipeline(device, withDepthPipeline, withoutDepthPipeline, pipelineLayout, layout, shaderModules);
+	}
+
+	private static long createShaderModule(
+		final Vk11Device device, final BackendRenderPipeline.CreateInfo.Shader shader, final String pipelineName
+	) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			// The frontend releases the SpvModule as soon as compilation finishes, so upload right away
+			ByteBuffer spirv = shader.module().spv();
+			VkShaderModuleCreateInfo info = VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(spirv);
+			LongBuffer pointer = stack.callocLong(1);
+			Vk11Utils.crashIfFailure(
+				VK10.vkCreateShaderModule(device.vkDevice(), info, null, pointer), "Can't compile " + shader.name() + " for " + pipelineName
+			);
+			device.instance().debug().setObjectName(device.vkDevice(), VK10.VK_OBJECT_TYPE_SHADER_MODULE, pointer.get(0), () -> shader.name());
+			return pointer.get(0);
+		}
+	}
+
+	private static long createPipelineLayout(
+		final Vk11Device device, final Vk11BindGroupLayout layout, final int pushConstantRange, final String pipelineName
+	) {
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VkPipelineLayoutCreateInfo createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
+				.sType$Default()
+				.pSetLayouts(stack.longs(layout.handle()));
+
+			if (pushConstantRange > 0) {
+				VkPushConstantRange.Buffer range = VkPushConstantRange.calloc(1, stack)
+					.stageFlags(VK10.VK_SHADER_STAGE_VERTEX_BIT | VK10.VK_SHADER_STAGE_FRAGMENT_BIT)
+					.offset(0)
+					.size(pushConstantRange);
+				createInfo.pPushConstantRanges(range);
+			}
+
+			LongBuffer pointer = stack.callocLong(1);
+			Vk11Utils.crashIfFailure(
+				VK10.vkCreatePipelineLayout(device.vkDevice(), createInfo, null, pointer), "Can't create pipeline layout for " + pipelineName
+			);
+			long handle = pointer.get(0);
+			device.instance().debug().setObjectName(
+				device.vkDevice(), VK10.VK_OBJECT_TYPE_PIPELINE_LAYOUT, handle, () -> "Pipeline layout for " + pipelineName
+			);
+			return handle;
+		}
+	}
+
+	private static VkPipelineVertexInputStateCreateInfo createVertexInputState(
+		final Vk11Device device, final MemoryStack stack, final BackendRenderPipeline.CreateInfo info
+	) {
+		List<BackendRenderPipeline.CreateInfo.VertexBuffer> vertexBuffers = info.vertexBuffers();
+		org.lwjgl.vulkan.VkVertexInputAttributeDescription.Buffer vertexAttributeDescriptions =
+			VkVertexInputAttributeDescription.calloc(info.attribBindings().size(), stack);
+		org.lwjgl.vulkan.VkVertexInputBindingDescription.Buffer vertexBindingDescriptions =
+			VkVertexInputBindingDescription.calloc(vertexBuffers.size(), stack);
+		org.lwjgl.vulkan.VkVertexInputBindingDivisorDescriptionEXT.Buffer vertexBindingDivisorDescriptions =
+			VkVertexInputBindingDivisorDescriptionEXT.calloc(vertexBuffers.size(), stack);
+		int divisorCount = 0;
+
+		for (int i = 0; i < vertexBuffers.size(); i++) {
+			BackendRenderPipeline.CreateInfo.VertexBuffer vertexBuffer = vertexBuffers.get(i);
+			vertexBindingDescriptions.put(
+				VkVertexInputBindingDescription.calloc(stack)
+					.binding(vertexBuffer.bufferSlot())
+					.stride(vertexBuffer.stride())
+					.inputRate(vertexBuffer.stepRate() > 0 ? VK10.VK_VERTEX_INPUT_RATE_INSTANCE : VK10.VK_VERTEX_INPUT_RATE_VERTEX)
+			);
+
+			if (vertexBuffer.stepRate() > 0) {
+				if (device.features.vertexAttributeDivisor()) {
+					vertexBindingDivisorDescriptions.put(
+						VkVertexInputBindingDivisorDescriptionEXT.calloc(stack)
+							.binding(vertexBuffer.bufferSlot())
+							.divisor(vertexBuffer.stepRate())
+					);
+					divisorCount++;
+				} else if (vertexBuffer.stepRate() > 1) {
+					throw new IllegalStateException("Device does not support instance attribute divisor above 1");
+				}
+			}
+		}
+
+		for (BackendRenderPipeline.CreateInfo.AttribBinding binding : info.attribBindings()) {
+			vertexAttributeDescriptions.put(
+				VkVertexInputAttributeDescription.calloc(stack)
+					.location(binding.location())
+					.binding(binding.bufferSlot())
+					.offset(binding.offset())
+					.format(Vk11Const.toVk(binding.format()))
+			);
+		}
+
+		vertexAttributeDescriptions.flip();
+		vertexBindingDescriptions.flip();
+		vertexBindingDivisorDescriptions.flip();
+		VkPipelineVertexInputStateCreateInfo vertexInputState = VkPipelineVertexInputStateCreateInfo.calloc(stack)
+			.sType$Default()
+			.pVertexAttributeDescriptions(vertexAttributeDescriptions)
+			.pVertexBindingDescriptions(vertexBindingDescriptions);
+
+		if (divisorCount > 0) {
 			VkPipelineVertexInputDivisorStateCreateInfoEXT vertexInputDivisorState = VkPipelineVertexInputDivisorStateCreateInfoEXT.calloc(stack)
 				.sType$Default()
 				.pVertexBindingDivisors(vertexBindingDivisorDescriptions);
-			VkPipelineVertexInputStateCreateInfo vertexInputState = VkPipelineVertexInputStateCreateInfo.calloc(stack)
-				.sType$Default()
-				.pVertexAttributeDescriptions(vertexAttributeDescriptions)
-				.pVertexBindingDescriptions(vertexBindingDescriptions);
-			if (vertexInputDivisorState.vertexBindingDivisorCount() > 0) {
-				vertexInputState.pNext(vertexInputDivisorState);
-			}
-
-			VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
-				.sType$Default()
-				.topology(Vk11Const.toVk(pipeline.getPrimitiveTopology()));
-
-            int polygonMode;
-
-            if(!device.features.fillModeNonSolid()) polygonMode = VK10.VK_POLYGON_MODE_FILL;
-            else polygonMode = Vk11Const.toVk(pipeline.getPolygonMode());
-
-			VkPipelineRasterizationStateCreateInfo rasterizationState = VkPipelineRasterizationStateCreateInfo.calloc(stack)
-				.sType$Default()
-				.polygonMode(polygonMode)
-				.cullMode(pipeline.isCull() ? VK10.VK_CULL_MODE_BACK_BIT : VK10.VK_CULL_MODE_NONE)
-				.frontFace(VK10.VK_FRONT_FACE_CLOCKWISE)
-				.lineWidth(1.0F);
-			VkPipelineDepthStencilStateCreateInfo depthStencilState = VkPipelineDepthStencilStateCreateInfo.calloc(stack).sType$Default();
-			if (pipeline.getDepthStencilState() != null) {
-				rasterizationState.depthBiasEnable(
-					pipeline.getDepthStencilState().depthBiasConstant() != 0.0F && pipeline.getDepthStencilState().depthBiasScaleFactor() != 0.0F
-				);
-				rasterizationState.depthBiasConstantFactor(pipeline.getDepthStencilState().depthBiasConstant());
-				rasterizationState.depthBiasSlopeFactor(pipeline.getDepthStencilState().depthBiasScaleFactor());
-				depthStencilState.depthTestEnable(true);
-				depthStencilState.depthWriteEnable(pipeline.getDepthStencilState().writeDepth());
-				depthStencilState.depthCompareOp(Vk11Const.toVk(pipeline.getDepthStencilState().depthTest()));
-			}
-
-			ColorTargetState[] colorTargetStates = pipeline.getColorTargetStates();
-			org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState.Buffer blendAttachments = VkPipelineColorBlendAttachmentState.calloc(colorTargetStates.length, stack);
-
-			for (ColorTargetState colorTargetState : colorTargetStates) {
-				blendAttachments.colorWriteMask(colorTargetState != null ? Vk11Const.toVk(colorTargetState) : 0);
-				if (colorTargetState != null && colorTargetState.blendFunction().isPresent()) {
-					applyBlendInformation(blendAttachments, colorTargetState.blendFunction().get());
-				}
-
-				blendAttachments.position(blendAttachments.position() + 1);
-			}
-
-			blendAttachments.position(0);
-			VkPipelineColorBlendStateCreateInfo colorBlendState = VkPipelineColorBlendStateCreateInfo.calloc(stack).sType$Default().pAttachments(blendAttachments);
-			VkPipelineMultisampleStateCreateInfo multisampleState = VkPipelineMultisampleStateCreateInfo.calloc(stack).sType$Default().rasterizationSamples(VK10.VK_SAMPLE_COUNT_1_BIT);
-			VkPipelineDynamicStateCreateInfo dynamicState = VkPipelineDynamicStateCreateInfo.calloc(stack)
-				.sType$Default()
-				.pDynamicStates(stack.ints(VK10.VK_DYNAMIC_STATE_VIEWPORT, VK10.VK_DYNAMIC_STATE_SCISSOR));
-			VkPipelineViewportStateCreateInfo viewportState = VkPipelineViewportStateCreateInfo.calloc(stack).sType$Default().viewportCount(1).scissorCount(1);
-
-			long withDepthPipeline;
-			long withoutDepthPipeline;
-
-			{
-				VkGraphicsPipelineCreateInfo.Buffer pipelineInfo = VkGraphicsPipelineCreateInfo.calloc(1, stack);
-				pipelineInfo.sType$Default();
-				pipelineInfo.stageCount(2);
-				pipelineInfo.pStages(shaderStages);
-				pipelineInfo.pVertexInputState(vertexInputState);
-				pipelineInfo.pInputAssemblyState(inputAssemblyState);
-				pipelineInfo.pRasterizationState(rasterizationState);
-				pipelineInfo.pDepthStencilState(depthStencilState);
-				pipelineInfo.pColorBlendState(colorBlendState);
-				pipelineInfo.pMultisampleState(multisampleState);
-				pipelineInfo.pDynamicState(dynamicState);
-				pipelineInfo.pViewportState(viewportState);
-				pipelineInfo.layout(pipelineLayout);
-				pipelineInfo.renderPass(vkRenderPassWithDepth);
-				pipelineInfo.subpass(0);
-
-				LongBuffer pointer = stack.callocLong(1);
-				Vk11Utils.crashIfFailure(
-                        VK10.vkCreateGraphicsPipelines(device.vkDevice(), 0L, pipelineInfo, null, pointer), "Failed to create pipeline with depth"
-				);
-				withDepthPipeline = pointer.get(0);
-			}
-
-			{
-				depthStencilState.depthTestEnable(false);
-				depthStencilState.depthWriteEnable(false);
-
-				VkGraphicsPipelineCreateInfo.Buffer pipelineInfo = VkGraphicsPipelineCreateInfo.calloc(1, stack);
-				pipelineInfo.sType$Default();
-				pipelineInfo.stageCount(2);
-				pipelineInfo.pStages(shaderStages);
-				pipelineInfo.pVertexInputState(vertexInputState);
-				pipelineInfo.pInputAssemblyState(inputAssemblyState);
-				pipelineInfo.pRasterizationState(rasterizationState);
-				pipelineInfo.pDepthStencilState(depthStencilState);
-				pipelineInfo.pColorBlendState(colorBlendState);
-				pipelineInfo.pMultisampleState(multisampleState);
-				pipelineInfo.pDynamicState(dynamicState);
-				pipelineInfo.pViewportState(viewportState);
-				pipelineInfo.layout(pipelineLayout);
-				pipelineInfo.renderPass(vkRenderPassWithoutDepth);
-				pipelineInfo.subpass(0);
-
-				LongBuffer pointer = stack.callocLong(1);
-				Vk11Utils.crashIfFailure(
-                        VK10.vkCreateGraphicsPipelines(device.vkDevice(), 0L, pipelineInfo, null, pointer), "Failed to create pipeline without depth"
-				);
-				withoutDepthPipeline = pointer.get(0);
-			}
-
-			return new Vk11RenderPipeline(pipeline, device, withDepthPipeline, withoutDepthPipeline, pipelineLayout, layout, descriptorPool, vertexModule, fragmentModule);
+			vertexInputState.pNext(vertexInputDivisorState);
 		}
+
+		return vertexInputState;
+	}
+
+	private static long createGraphicsPipeline(
+		final Vk11Device device,
+		final MemoryStack stack,
+		final String pipelineName,
+		final Buffer shaderStages,
+		final VkPipelineVertexInputStateCreateInfo vertexInputState,
+		final VkPipelineInputAssemblyStateCreateInfo inputAssemblyState,
+		final VkPipelineRasterizationStateCreateInfo rasterizationState,
+		final VkPipelineDepthStencilStateCreateInfo depthStencilState,
+		final VkPipelineColorBlendStateCreateInfo colorBlendState,
+		final VkPipelineMultisampleStateCreateInfo multisampleState,
+		final VkPipelineDynamicStateCreateInfo dynamicState,
+		final VkPipelineViewportStateCreateInfo viewportState,
+		final long pipelineLayout,
+		final long renderPass,
+		final String variant
+	) {
+		VkGraphicsPipelineCreateInfo.Buffer pipelineInfo = VkGraphicsPipelineCreateInfo.calloc(1, stack);
+		pipelineInfo.sType$Default();
+		pipelineInfo.stageCount(shaderStages.remaining());
+		pipelineInfo.pStages(shaderStages);
+		pipelineInfo.pVertexInputState(vertexInputState);
+		pipelineInfo.pInputAssemblyState(inputAssemblyState);
+		pipelineInfo.pRasterizationState(rasterizationState);
+		pipelineInfo.pDepthStencilState(depthStencilState);
+		pipelineInfo.pColorBlendState(colorBlendState);
+		pipelineInfo.pMultisampleState(multisampleState);
+		pipelineInfo.pDynamicState(dynamicState);
+		pipelineInfo.pViewportState(viewportState);
+		pipelineInfo.layout(pipelineLayout);
+		pipelineInfo.renderPass(renderPass);
+		pipelineInfo.subpass(0);
+
+		LongBuffer pointer = stack.callocLong(1);
+		Vk11Utils.crashIfFailure(
+			VK10.vkCreateGraphicsPipelines(device.vkDevice(), 0L, pipelineInfo, null, pointer), "Failed to create pipeline " + variant + " for " + pipelineName
+		);
+		return pointer.get(0);
 	}
 
 	private static void applyBlendInformation(final VkPipelineColorBlendAttachmentState.Buffer blendAttachments, final BlendFunction blendFunction) {
@@ -246,15 +372,19 @@ public record Vk11RenderPipeline(
 			VK10.vkDestroyPipeline(this.device.vkDevice(), this.withDepthPipeline, null);
 		}
 
-
 		if (this.withoutDepthPipeline != 0L) {
 			VK10.vkDestroyPipeline(this.device.vkDevice(), this.withoutDepthPipeline, null);
 		}
 
 		VK10.vkDestroyPipelineLayout(this.device.vkDevice(), this.pipelineLayout, null);
 		VK10.vkDestroyDescriptorSetLayout(this.device.vkDevice(), this.layout.handle(), null);
-		this.descriptorPool.destroy();
-		VK10.vkDestroyShaderModule(this.device.vkDevice(), this.vertexModule, null);
-		VK10.vkDestroyShaderModule(this.device.vkDevice(), this.fragmentModule, null);
+
+		if (this.descriptorPool != null) {
+			this.descriptorPool.destroy();
+		}
+
+		for (long module : this.shaderModules) {
+			VK10.vkDestroyShaderModule(this.device.vkDevice(), module, null);
+		}
 	}
 }

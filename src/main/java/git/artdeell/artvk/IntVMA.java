@@ -1,6 +1,6 @@
 package git.artdeell.artvk;
 
-import com.mojang.blaze3d.systems.BackendCreationException;
+import com.mojang.renderpearl.api.device.BackendCreationException;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
