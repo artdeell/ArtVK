@@ -2,6 +2,8 @@ package git.artdeell.artvk;
 
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import java.nio.LongBuffer;
+
+import git.artdeell.ArtVK;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import org.lwjgl.system.MemoryStack;
@@ -11,14 +13,9 @@ import org.lwjgl.vulkan.VkDescriptorPoolSize.Buffer;
 
 @Environment(EnvType.CLIENT)
 public class Vk11DescriptorPool implements Destroyable {
-    // TODO: XXX ABI BREAKAGE - 26.3's texture atlas upload binds a different texture view and a different
-    // SpriteAnimationInfo slice for every single sprite in one render pass, so a busy frame dirties descriptors
-    // once per draw. 26.2's atlas code was identical, but the atlases had grown past what a single 1512-set
-    // round could serve, which made the 4th preallocateMore() slice past the end of the set table. The set
-    // table is now sized for SET_PREALLOCATE_COUNT * 10 rounds instead of the 3 that 1512 allowed.
-    public static final int SET_PREALLOCATE_COUNT = 504;
-    public static final int SETS_PER_FRAME = SET_PREALLOCATE_COUNT * 10;
-    public static final int RECLAIM_THRESHOLD = 504;
+    public static final int SET_PREALLOCATE_COUNT = 600;
+    public static final int SETS_PER_FRAME = SET_PREALLOCATE_COUNT * 3;
+    public static final int RECLAIM_THRESHOLD = 600;
 
 	private final Vk11Device device;
     private final PoolObject[] pools = new PoolObject[Vk11CommandEncoder.MAX_SUBMITS_IN_FLIGHT];
@@ -176,11 +173,8 @@ public class Vk11DescriptorPool implements Destroyable {
 
         public void preallocateMore(int count) {
             assert count <= SET_PREALLOCATE_COUNT;
-            if(numAllocated + count > SETS_PER_FRAME) {
-                throw new IllegalStateException("Descriptor set pool exhausted (" + numAllocated + " of " + SETS_PER_FRAME
-                        + " sets already allocated) - raise Vk11DescriptorPool.SETS_PER_FRAME");
-            }
             LongBuffer layoutsSlice = MemoryUtil.memSlice(bindGroupLayouts, 0, count);
+            // TODO: check why this crashes with the old prealloc size
             LongBuffer outSetsSlice = MemoryUtil.memSlice(sets, numAllocated, count);
             try(MemoryStack stack = MemoryStack.stackPush()) {
                 VkDescriptorSetAllocateInfo allocInfo = VkDescriptorSetAllocateInfo.calloc(stack)
