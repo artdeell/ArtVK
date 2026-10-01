@@ -38,10 +38,8 @@ public class Vk11CommandEncoder implements CommandEncoderBackend, Destroyable {
 	private final Vk11CommandPool[] commandPools = new Vk11CommandPool[MAX_SUBMITS_IN_FLIGHT];
 	private @Nullable VkCommandBuffer currentCommandBuffer;
 	private @Nullable Vk11RenderPass currentRenderPass;
-	// TODO: XXX ABI BREAKAGE - GpuDeviceBackend#compilePipeline now runs on Util.backgroundExecutor() instead of
-	// the render thread, so pipelines register their descriptor pool from a worker thread while submit() iterates
-	// this list. Copy-on-write keeps that iteration safe (and it is walked once per frame, not written often).
-	private final java.util.concurrent.CopyOnWriteArrayList<Vk11DescriptorPool> descriptorPools = new java.util.concurrent.CopyOnWriteArrayList<>();
+	// This list is accessed by the pipeline builder outside of the render thread hence causing blow up on the simple array list
+	private final CopyOnWriteArrayList<Vk11DescriptorPool> descriptorPools = new CopyOnWriteArrayList<>();
 
 	public Vk11CommandEncoder(final Vk11Device device) {
 		this.device = device;

@@ -227,8 +227,6 @@ public class Vk11Device implements GpuDeviceBackend {
 
 	@Override
 	public @NotNull BackendRenderPipeline.Pending compilePipeline(final @NotNull BackendRenderPipeline.CreateInfo pipelineCreateInfo) {
-		// TODO: XXX ABI BREAKAGE - the frontend now owns shader compilation and reflection, so the backend
-		// receives ready-made SPIR-V modules and an already-flattened uniform list instead of a RenderPipeline.
 		Vk11RenderPipeline pipeline = Vk11RenderPipeline.compile(this, pipelineCreateInfo);
 		return () -> pipeline;
 	}
