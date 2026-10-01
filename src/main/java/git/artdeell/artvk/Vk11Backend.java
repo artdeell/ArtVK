@@ -36,13 +36,6 @@ public class Vk11Backend implements GpuBackend {
     private boolean libraryLoaded;
     private @Nullable BackendCreationException libraryLoadFailure;
 
-    /**
-     * True once this backend has handed out a device. Compatibility layers that used to dig the backend
-     * out of the {@code GpuDevice} implementation now watch this flag instead, because that field moved
-     * to another package and the old accessor no longer resolves.
-     */
-    public static boolean deviceActive = false;
-
 	@Override
 	public @NotNull String getName() {
 		return NAME;
@@ -95,8 +88,6 @@ public class Vk11Backend implements GpuBackend {
 		if (!NativeLibrariesBootstrap.isVulkanLoaderAvailable()) {
 			throw new BackendCreationException("Vulkan loader library is missing", BackendCreationException.Reason.VULKAN_LOADER_MISSING);
 		}
-
-		deviceActive = true;
 
 		Vk11Instance instance = null;
 		Vk11PhysicalDevice physicalDevice = null;

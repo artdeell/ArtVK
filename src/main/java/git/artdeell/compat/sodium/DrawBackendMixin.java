@@ -16,15 +16,13 @@ public class DrawBackendMixin {
     private static void injectBackend(CallbackInfoReturnable<DrawBackend> cir){
         // Basically how Sodium picks the correct draw backend
         GpuDevice device = RenderSystem.getDevice();
-        if (Vk11Backend.deviceActive) {
-            if(device.getDeviceInfo().features().multiDrawDirectInterleaved())
-                cir.setReturnValue(DrawBackend.VK_MULTIDRAW);
+        if(device.getDeviceInfo().features().multiDrawDirectInterleaved())
+            cir.setReturnValue(DrawBackend.VK_MULTIDRAW);
             // Upstream Sodium uses MDI here, but we will check for generic indirect draw
             // MDI is emulated on the backend side
-            else if(device.getDeviceInfo().features().drawIndirect())
-                cir.setReturnValue(DrawBackend.VK_INDIRECT);
-            else throw new IllegalStateException("Selected Vulkan device does not support neither multidraw nor indirect draw backends. Sodium might be unsupported on this device");
-            cir.cancel();
-        }
+        else if(device.getDeviceInfo().features().drawIndirect())
+            cir.setReturnValue(DrawBackend.VK_INDIRECT);
+        else throw new IllegalStateException("Selected Vulkan device does not support neither multidraw nor indirect draw backends. Sodium might be unsupported on this device");
+        cir.cancel();
     }
 }
